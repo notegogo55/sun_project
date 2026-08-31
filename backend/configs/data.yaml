@@ -1,0 +1,187 @@
+# การตั้งค่าการดึงและสร้าง dataset
+# ค่าทั้งหมดนี้ถูก parse โดย src/sunseg/config.py (pydantic) — ชื่อ field ต้องตรงกัน
+
+paths:
+  raw: data/raw
+  interim: data/interim
+  processed: data/processed
+  artifacts: artifacts
+
+jsoc:
+  # อีเมลอ่านจาก env SUNSEG_JSOC_EMAIL (ดู .env.example) — ไม่ต้องใส่ที่นี่
+
+  # ใช้ series CEA สำหรับ keyword ของ LSTM: ค่า SHARP parameters ถูกคำนวณบนพิกัดที่
+  # แก้ผลการฉายแล้ว จึงเทียบข้าม AR และข้ามตำแหน่งบนจานได้อย่างถูกต้อง
+  sharp_series: hmi.sharp_cea_720s
+
+  # แต่ใช้ series พิกัด CCD สำหรับ bitmap ที่เอาไปทำ mask: มันอยู่ในระบบพิกัด
+  # helioprojective เดียวกับภาพเต็มดวง การ reproject จึงแทบเป็นการวางทับตรงๆ
+  # (ถ้าใช้ CEA ต้องแปลงพิกัดจริงจังและเกิดความคลาดเคลื่อนจากการ interpolate)
+  sharp_bitmap_series: hmi.sharp_720s
+
+  fulldisk_series: hmi.M_720s
+  max_retries: 4
+  retry_backoff_s: 5.0
+  export_batch_size: 200
+
+time_range:
+  start: "2011-01-01"
+  end: "2025-12-31"
+
+# หน้าต่าง case study — ชุดประเมิน out-of-sample ไม่ใช่ชุดเทรน
+#
+# พ.ค. 2024 คือพายุ Gannon: AR 13664 ปล่อย X8.7 เมื่อ 14 พ.ค. (เปลวที่แรงที่สุดของ
+# solar cycle 25) และก่อพายุแม่เหล็กโลกระดับ G5 ครั้งแรกนับตั้งแต่ปี 2003
+#
+# โมเดลทุกตัวยังเทรนจาก time_range ด้านบน (2011-2017) ช่วงนี้ใช้เป็น test ล้วนๆ
+# ไม่ต้องแก้ split: split_frames_by_time() จัดทุกเฟรมหลัง val_end + gap_days ลง
+# test อยู่แล้ว และ 2024 อยู่ห่างจาก val_end (2016-06-30) ไปมาก
+case_study:
+  start: "2024-05-01"
+  end: "2024-05-31"
+  # 12 ชม. ไม่ใช่ 168 ชม. แบบ fulldisk.cadence_hours — เหตุผลของ cadence ห่างคือ
+  # ต้องการหน้าจานที่ไม่ซ้ำกันตลอด 7 ปี แต่ที่นี่เป้าหมายกลับกัน: ต้องเห็น
+  # วิวัฒนาการของ AR 13664 ดวงเดิมอย่างต่อเนื่อง  31 วัน @ 12 ชม. = 62 เฟรม
+  cadence_hours: 12
+
+sharp:
+  cadence_hours: 1
+  # กรอง frame ที่มีปัญหา: JSOC ใช้ QUALITY เป็น bitfield, 0 = สมบูรณ์
+  require_quality_zero: true
+  # SHARP parameters ไม่น่าเชื่อถือใกล้ limb เพราะ projection effect (Bobra & Couvidat 2015)
+  abs_lon_max_deg: 68.0
+  # จำนวน pixel สนามแม่เหล็กเข้มขั้นต่ำ — ตัด HARP จิ๋วที่เป็น noise
+  min_npix: 100
+
+  # 18 features มาตรฐาน (Bobra & Couvidat 2015 + R_VALUE จาก Schrijver 2007)
+  # ลำดับนี้ถูก freeze ไว้ — ห้ามสลับ เพราะ checkpoint ของโมเดลผูกกับลำดับนี้
+  #
+  # หมายเหตุ: กลุ่ม Lorentz-force (TOTBSQ, TOTFZ, EPSZ) ถูกตัดออกเพราะ series
+  # hmi.sharp_cea_720s ไม่ได้คำนวณไว้ให้ (ตรวจสอบแล้ว: NaN 100%) ทั้งสามตัวมี
+  # สหสัมพันธ์สูงกับ USFLUX/TOTPOT ที่ยังอยู่ในชุด จึงสูญเสียข้อมูลไม่มาก
+  features:
+    - TOTUSJH   # total unsigned current helicity  (predictor อันดับ 1)
+    - TOTPOT    # total photospheric magnetic free energy density
+    - TOTUSJZ   # total unsigned vertical current
+    - ABSNJZH   # absolute value of net current helicity
+    - SAVNCPP   # sum of modulus of net current per polarity
+    - USFLUX    # total unsigned flux
+    - AREA_ACR  # area of strong-field pixels
+    - MEANPOT   # mean photospheric magnetic free energy
+    - R_VALUE   # flux near polarity inversion line
+    - SHRGT45   # fraction of area with shear > 45 deg
+    - MEANSHR   # mean shear angle
+    - MEANGAM   # mean angle of field from radial
+    - MEANGBT   # mean gradient of total field
+    - MEANGBZ   # mean gradient of vertical field
+    - MEANGBH   # mean gradient of horizontal field
+    - MEANJZH   # mean current helicity
+    - MEANJZD   # mean vertical current density
+    - MEANALP   # mean twist parameter alpha
+
+  # keyword ที่ต้องดึงเพิ่มเพื่อใช้กรอง/เชื่อมข้อมูล (ไม่ใช่ feature ของโมเดล)
+  meta_keys:
+    - HARPNUM
+    - T_REC
+    - QUALITY
+    - LAT_FWT
+    - LON_FWT
+    - CRLN_OBS
+    - CRLT_OBS
+    - NOAA_AR
+    - NOAA_ARS
+    - NPIX
+    - SIZE_ACR
+
+fulldisk:
+  # 7 วัน: ดวงอาทิตย์หมุนรอบละ 27 วัน การเว้น 7 วันจึงได้หน้าจานที่แทบไม่ซ้ำกัน
+  # เฟรมที่ห่างกัน 12 ชม. มี AR ชุดเดิมเกือบทั้งหมด (correlation สูงมาก) — เหตุผล
+  # เดียวกับที่ README อธิบายเรื่อง effective sample size ของ LSTM
+  # 2011-2017 @ 7 วัน = ~365 เฟรม  (@ 12 ชม. = ~5112 เฟรม = ดาวน์โหลด 9 วันเต็ม)
+  cadence_hours: 168
+  target_size: 512          # ย่อจาก 4096 -> 512 ให้พอดี VRAM 4GB
+  # ค่า bitmap ของ SHARP: >= 33 คือ pixel ที่อยู่ในขอบเขต AR
+  # (ค่านี้ถูก verify ตอน runtime ใน build_masks.py — ดู assert_bitmap_encoding)
+  bitmap_ar_value: 33
+  min_ar_area_px: 12        # ที่ความละเอียด 512 — ตัด blob เล็กที่เป็น noise
+  delete_fits_after_process: true   # สำคัญ: disk เหลือแค่ 55GB
+
+flare:
+  horizon_hours: 24         # ทำนายล่วงหน้า 24 ชม.
+  positive_goes_class: "M1.0"
+  # HEK จำกัดขนาด response — ต้องแบ่ง query
+  # ถ้าเจอช่วงที่ flare ถี่มากจนสงสัยว่าชน limit ลดค่านี้ได้ด้วย --hek-chunk-days
+  # โดยไม่ต้องแก้ไฟล์
+  hek_chunk_days: 60
+
+# ฟลักซ์โปรตอนรอบเวลาที่เกิด flare — ใช้วาดแผงโปรตอนในหน้าเว็บเท่านั้น ไม่ใช่ feature
+# ของโมเดล
+#
+# คลังนี้อยู่นอก repo และต่างกันไปในแต่ละเครื่อง: ตั้ง SUNSEG_PROTON_DIR ใน .env
+# เพื่อทับค่าข้างล่างโดยไม่ต้องแก้ไฟล์ที่ถูก commit  ถ้า path ไม่มีอยู่จริง แอปยัง
+# เปิดได้ตามปกติ เพียงแต่ซ่อนแผงโปรตอนไป
+proton:
+  root: "D:/PositionFlare/GOES_proton_flux_integral/particle_clean"
+  # เผื่อก่อนน้อย เผื่อหลังมาก: อนุภาคเดินทางถึงโลกช้ากว่าแสงเป็นชั่วโมง แล้วค่อย ๆ
+  # ลดลงเป็นวัน ยอด SEP จึงอยู่หลังเวลาที่ flare พีคเสมอ
+  before_hours: 12
+  after_hours: 60
+
+# ภาพ AIA สามชั้นบรรยากาศ — ใช้แสดงผลและดึงค่าความเข้มแสงราย active region
+#
+# ที่มา: คลัง "synoptic" ของ JSOC ซึ่งเป็น **level 1.5 อยู่แล้ว** (registered, de-rolled,
+# CROTA2=0, CDELT=2.4"/px, 1024x1024 จากการ bin 4x4) จึงไม่ต้องใช้ aiapy.calibrate.register()
+# และดึงผ่าน HTTP ธรรมดาได้เลย ไม่ต้องเข้าคิว export ของ JSOC (เร็วกว่ามาก ~1.4GB เทียบกับ ~40GB)
+#
+# ค่าที่เก็บเป็น DN/s (หารด้วย EXPTIME แล้ว) แต่ **ไม่ได้แก้ instrument degradation**
+# จึงเทียบกันได้เฉพาะภายในเฟรมเดียวเท่านั้น — ห้ามเทียบข้ามปี
+#
+# ตั้ง SUNSEG_AIA_DIR ใน .env เพื่อทับ root ได้ ถ้าไม่มีข้อมูล แอปยังเปิดได้ตามปกติ
+aia:
+  root: data/processed/aia
+  synoptic_base_url: "https://jsoc1.stanford.edu/data/aia/synoptic"
+  target_size: 512          # ต้องตรงกับ fulldisk.target_size — mask ถึงจะทับกันได้พอดี
+
+  # หนึ่งช่องต่อหนึ่งชั้นบรรยากาศ เรียงจากชั้นล่างขึ้นบน
+  #
+  # display_vmax คงที่ต่อช่อง (ไม่ใช่ percentile รายภาพ) เพื่อให้ความสว่างเทียบกันได้
+  # ข้ามเฟรม — ถ้าใช้ percentile รายภาพ การสลับเฟรมจะเปลี่ยนความสว่างเงียบ ๆ จนแยกไม่ออก
+  # ว่าอะไรคือปรากฏการณ์จริง อะไรคือผลของการ normalise
+  #
+  # ค่าที่ตั้งไว้เทียบกับการกระจายของ p99.9 รายเฟรม วัดจากตัวอย่าง 45 เฟรมทั่วช่วง 2011-2017:
+  #
+  #   ช่อง   p50     p90     สูงสุด   vmax
+  #   1600   126.5   197.6   250.1    180
+  #    304   116.6   237.9   445.4    250
+  #    171  1459.5  1992.1  2075.5   2500
+  #
+  # จงใจตั้งสูงกว่า p50 อยู่ราว 1.4-2 เท่า เพื่อเผื่อหัวให้เฟรมที่คึกคักไม่ถูกตัดยอด
+  # ดูเหมือนจะทำให้ภาพมืด แต่ AsinhStretch(0.02) บีบช่วงสว่างไว้แรงมากจนไม่เป็นเช่นนั้น
+  # (ตรวจด้วยตาแล้ว — อย่าปรับค่าพวกนี้จากตัวเลขอย่างเดียว ให้เรนเดอร์ออกมาดูจริงเสมอ)
+  # สคริปต์ download_aia.py พิมพ์ p99.9 ที่วัดได้ทุกครั้งเพื่อใช้เทียบ
+  channels:
+    - wavelength: 1600
+      label: "AIA 1600 Å"
+      region: "โฟโตสเฟียร์"
+      display_vmax: 180.0
+    - wavelength: 304
+      label: "AIA 304 Å"
+      region: "โครโมสเฟียร์"
+      display_vmax: 250.0
+    - wavelength: 171
+      label: "AIA 171 Å"
+      region: "โคโรนา"
+      display_vmax: 2500.0
+
+sequence:
+  length: 24                # 24 timesteps x cadence 1 ชม. = ประวัติ 24 ชม.
+  stride_hours: 1
+  # ถ้าขาดข้อมูลเกินสัดส่วนนี้ใน 1 sequence ให้ทิ้ง sample นั้น
+  max_missing_frac: 0.2
+
+split:
+  # แบ่งตามเวลา + HARP-disjoint: HARP ถูก assign ทั้งดวงตามเวลาที่ปรากฏครั้งแรก
+  # HARP ที่คร่อมเส้นแบ่ง (รวม gap) จะถูกทิ้งทั้งดวง เพื่อกัน leakage
+  train_end: "2015-06-30"
+  val_end: "2016-06-30"
+  gap_days: 14              # ~อายุขัยของ HARP หนึ่งดวง

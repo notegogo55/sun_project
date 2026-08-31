@@ -1,0 +1,22 @@
+# รัน webapp ด้วย Docker:
+#
+#     docker compose up --build
+#
+# เปิด http://localhost:8000
+#
+# หมายเหตุ: ต้องเทรนโมเดลบนเครื่องที่มี GPU ก่อน (ดู README) โมเดลและข้อมูลถูก
+# mount เข้าไปแบบอ่านอย่างเดียว ทำให้เปลี่ยนโมเดลได้โดยไม่ต้อง build image ใหม่
+
+services:
+  sunseg:
+    build: .
+    container_name: sunseg
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+      - ./data:/app/data:ro
+    environment:
+      # เส้นทางภายใน container — ต้องตรงกับที่ mount ไว้ข้างบน
+      - PYTHONUTF8=1
+    restart: unless-stopped

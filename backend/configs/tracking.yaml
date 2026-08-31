@@ -1,0 +1,23 @@
+# การติดตาม active region ข้ามเวลา พร้อมชดเชย differential rotation
+
+detect:
+  min_area_px: 12           # ที่ความละเอียด 512
+  morph_close_px: 3         # ปิดรูเล็กๆ ใน mask ก่อนหา connected component
+  morph_open_px: 2          # ตัด speckle
+
+rotation:
+  # กฎ Snodgrass (1983): omega(theta) = A + B*sin^2(theta) + C*sin^4(theta)  [deg/day]
+  # ถ้าไม่ชดเชย AR จะเลื่อนไป ~13 deg/วัน แล้วจับคู่ผิดทันที
+  snodgrass_A: 14.713
+  snodgrass_B: -2.396
+  snodgrass_C: -1.787
+
+tracker:
+  # cost = w_dist*d_norm + w_area*|dA|/A + w_iou*(1-IoU)
+  w_dist: 1.0
+  w_area: 0.3
+  w_iou: 0.5
+  max_cost: 1.2             # เกินกว่านี้ถือว่าไม่ใช่ AR เดียวกัน
+  max_match_dist_deg: 12.0  # ระยะสูงสุดหลังชดเชยการหมุนแล้ว
+  n_confirm: 2              # เห็นติดกันกี่ frame จึงเลื่อนเป็น confirmed
+  max_age_frames: 3         # หายไปกี่ frame จึงถือว่า lost

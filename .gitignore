@@ -1,0 +1,30 @@
+# Data — ห้าม commit (ใหญ่มากและดาวน์โหลดใหม่ได้)
+data/
+artifacts/
+runs/
+*.fits
+*.fits.gz
+*.npy
+*.npz
+*.parquet
+*.pt
+*.pth
+*.ckpt
+
+# Environment
+.venv/
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Notebooks
+.ipynb_checkpoints/

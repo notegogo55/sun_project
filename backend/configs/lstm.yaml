@@ -1,0 +1,38 @@
+# LSTM สำหรับทำนาย flare >= M1.0 ภายใน 24 ชม.
+
+# ขนาดโมเดลถูกกำหนดโดย "จำนวนตัวอย่างที่เป็นอิสระต่อกันจริง" ไม่ใช่จำนวนแถว
+#
+# ชุดข้อมูลมี ~208,000 sample แต่ sample ที่ห่างกัน 1 ชม. จาก AR ดวงเดียวกันแทบ
+# เหมือนกันทุกประการ **effective sample size จริงคือจำนวน HARP ที่เคยเกิด flare
+# ซึ่งมีเพียง ~114 ดวง** โมเดลจึงต้องเล็กมาก
+#
+# ผลการทดลอง (test TSS เทียบกับ logistic-regression baseline ที่ได้ 0.908):
+#   hidden=128, layers=2 (224k พารามิเตอร์) -> val 0.846 / test 0.425  overfit หนัก
+#   hidden=32,  layers=1 (~7k พารามิเตอร์)  -> ดูผลล่าสุดใน artifacts/metrics/lstm.json
+model:
+  hidden_size: 32
+  num_layers: 1
+  dropout: 0.4
+  bidirectional: false      # ทำนายจากอดีตเท่านั้น — ให้ความหมายทางฟิสิกส์ชัดเจน
+  use_attention: true       # attention pooling ข้าม timestep แทนการหยิบ hidden state สุดท้าย
+
+train:
+  epochs: 60
+  batch_size: 256           # โมเดลเล็ก + ข้อมูลตาราง — 4GB VRAM เหลือเฟือ
+  lr: 5.0e-4
+  weight_decay: 1.0e-3      # regularisation แรงขึ้นเพื่อกด overfitting
+  grad_clip: 1.0
+  early_stop_patience: 12
+  scheduler: cosine
+  warmup_epochs: 3
+  seed: 42
+
+loss:
+  type: focal               # positive rate จริงอยู่ที่ ~1-3% เท่านั้น
+  focal_alpha: 0.75
+  focal_gamma: 2.0
+
+eval:
+  # เลือก threshold ที่ maximize TSS บน validation แล้ว freeze ก่อนวัดผลบน test
+  select_threshold_on: val
+  primary_metric: tss

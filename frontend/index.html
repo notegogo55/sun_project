@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sunseg — ติดตาม Active Region และพยากรณ์ Solar Flare</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=18">
+<link rel="preconnect" href="https://cdn.plot.ly">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+<!-- ══ แถบบน — ติดหนึบ ย่อตัวลงเมื่อเลื่อนหน้า ══════════════════ -->
+<header class="topbar" id="topbar">
+  <a class="brand" href="#top">
+    <span class="logo" aria-hidden="true">☀</span>
+    <span class="brand__text">
+      <span class="brand__name">sunseg</span>
+      <span class="brand__tagline">Solar Active Region Segmentation · Tracking · Flare Forecasting</span>
+    </span>
+  </a>
+
+  <nav class="topnav" aria-label="ส่วนต่าง ๆ ของหน้า">
+    <a href="#dashboard" data-scroll>dashboard</a>
+    <a href="#about" data-scroll>เกี่ยวกับ</a>
+  </nav>
+
+  <div class="status-strip" id="statusStrip">
+    <span class="status status--pending" data-key="forecast" title="โมเดล LSTM พยากรณ์ flare">โมเดลพยากรณ์</span>
+    <span class="status status--pending" data-key="segmentation" title="โมเดล U-Net แบ่งส่วน active region">โมเดล segmentation</span>
+    <span class="status status--pending" data-key="sequences" title="ข้อมูล SHARP sequence ย้อนหลัง">ข้อมูลย้อนหลัง</span>
+  </div>
+</header>
+
+<div id="banner" class="banner hidden" role="status"></div>
+
+<!-- ══ HERO ═══════════════════════════════════════════════════ -->
+<section class="hero" id="top">
+  <div class="hero__inner">
+
+    <div class="hero__copy">
+      <p class="eyebrow" data-reveal>
+        <span>SDO/HMI</span><i>·</i><span>GOES XRS</span><i>·</i><span>NOAA</span>
+      </p>
+
+      <h1 class="hero__title" data-reveal>
+        พยากรณ์การปะทุ<br>
+        <em>บนดวงอาทิตย์</em>
+      </h1>
+
+      <p class="hero__lead" data-reveal>
+        แบ่งส่วน active region จากภาพ magnetogram เต็มดวง ติดตามผ่านการหมุนของดวงอาทิตย์
+        แล้วพยากรณ์โอกาสเกิด flare ระดับ ≥M1.0 ภายใน 24 ชั่วโมงข้างหน้า
+      </p>
+
+      <!-- สามตัวเลขนี้ดึงจาก API จริงตอนโหลด — ค่าที่เห็นเป็นโครงว่างก่อนข้อมูลมาถึง -->
+      <div class="hero__stats" data-reveal>
+        <article class="stat stat--risk">
+          <p class="stat__label">ความเสี่ยงสูงสุดตอนนี้</p>
+          <p class="stat__value" id="heroRisk">—</p>
+          <p class="stat__meta" id="heroRiskMeta">กำลังโหลด…</p>
+        </article>
+        <article class="stat">
+          <p class="stat__label">flare ในช่วงที่เลือก</p>
+          <p class="stat__value" id="heroFlares">—</p>
+          <p class="stat__meta" id="heroFlaresMeta">B:0 · C:0 · M:0 · X:0</p>
+        </article>
+        <article class="stat">
+          <p class="stat__label">ช่วงข้อมูล</p>
+          <p class="stat__value" id="heroRange">—</p>
+          <p class="stat__meta" id="heroRangeMeta">กำลังโหลด…</p>
+        </article>
+      </div>
+
+      <a class="btn btn--cta" href="#dashboard" data-scroll data-reveal>
+        เปิดหน้า dashboard <span aria-hidden="true">→</span>
+      </a>
+    </div>
+
+    <figure class="hero__visual" data-reveal>
+      <!-- ห่อจานไว้เพื่อให้ tooltip ที่เราวาดเองวางตำแหน่งเทียบกับกราฟได้ (ดู showDiskTip) -->
+      <div class="disk">
+        <div id="diskChart" class="chart chart--disk"></div>
+        <div id="diskTip" class="disktip" role="tooltip" aria-hidden="true"></div>
+      </div>
+      <figcaption class="hero__caption">
+        ตำแหน่ง flare บนจานสุริยะ · <span id="diskHint">—</span>
+      </figcaption>
+      <!-- ทำหน้าที่สองอย่างในแถวเดียว: บอกจำนวนต่อ class (legend) และกรองจุดบนจาน -->
+      <div class="diskfilter" id="diskFilter" role="group"
+           aria-label="กรอง flare บนจานตามระดับความรุนแรง"></div>
+      <div class="hero__minichart-wrap" id="heroMinichart">
+        <div class="hero__minichart-label">
+          <span class="hero__minichart-title">Proton flux</span>
+          <span class="hero__minichart-hint" id="heroProtonHint"></span>
+        </div>
+        <div id="heroProtonChart" class="chart chart--hero-proton"></div>
+      </div>
+    </figure>
+
+  </div>
+
+  <a class="hero__scroll" href="#dashboard" data-scroll aria-label="เลื่อนลงไปที่ dashboard">
+    <span></span>
+  </a>
+</section>
+
+<!-- ══ DASHBOARD ══════════════════════════════════════════════ -->
+<main class="dashboard" id="dashboard">
+
+  <!-- แถบปุ่มลัดเลือกช่วงเหตุการณ์สำคัญ -->
+  <div class="presets-bar" id="presetsBar" role="group" aria-label="ช่วงเหตุการณ์สำคัญ">
+    <span class="presets-bar__label">เหตุการณ์สำคัญ:</span>
+    <button type="button" class="preset-btn" data-start="2024-05-01" data-end="2024-05-31" data-harp="11149" title="พายุสุริยะ Gannon 2024 (AR 13664 ปล่อย X8.7)">
+      <span class="preset-btn__icon">🌟</span> พ.ค. 2024 (Gannon X8.7)
+    </button>
+    <button type="button" class="preset-btn" data-start="2014-10-18" data-end="2014-10-31" data-harp="1807" title="Monster AR 12192 (X3.1)">
+      <span class="preset-btn__icon">⚡</span> ต.ค. 2014 (AR 12192)
+    </button>
+    <button type="button" class="preset-btn" data-start="2017-09-01" data-end="2017-09-15" data-harp="7115" title="Solar Storm ก.ย. 2017 (AR 12673 X9.3)">
+      <span class="preset-btn__icon">💥</span> ก.ย. 2017 (AR 12673 X9.3)
+    </button>
+    <button type="button" class="preset-btn" data-start="2014-01-01" data-end="2014-01-31" title="Solar Maximum ช่วงสูงสุดของ Cycle 24">
+      <span class="preset-btn__icon">🔥</span> ม.ค. 2014 (Solar Max)
+    </button>
+    <button type="button" class="preset-btn" data-start="2011-01-01" data-end="2024-05-31" title="ช่วงข้อมูลทั้งหมดที่ประมวลผล">
+      <span class="preset-btn__icon">📅</span> ข้อมูลทั้งหมด (2011–2024)
+    </button>
+  </div>
+
+  <!-- แถบกรองเดียวของทั้งหน้า — ทุกแผงด้านล่างใช้ช่วงเวลานี้ร่วมกัน -->
+  <div class="filterbar" id="filterbar">
+    <label class="field">
+      <span class="field__label">จาก</span>
+      <input type="date" id="goesStart" value="2014-10-18">
+    </label>
+    <label class="field">
+      <span class="field__label">ถึง</span>
+      <input type="date" id="goesEnd" value="2014-10-31">
+    </label>
+    <label class="field">
+      <span class="field__label">flare ขั้นต่ำ</span>
+      <select id="goesMinClass">
+        <option value="B1.0">≥ B</option>
+        <option value="C1.0" selected>≥ C</option>
+        <option value="M1.0">≥ M</option>
+      </select>
+    </label>
+    <button id="goesReload" class="btn">แสดงข้อมูล</button>
+    <span class="filterbar__note" id="rangeNote"></span>
+  </div>
+
+  <div class="grid">
+
+    <!-- ── ภาพ magnetogram + mask ──────────────────────────── -->
+    <section class="card card--frame" aria-labelledby="h-frame" data-reveal>
+      <div class="card__head">
+        <h2 id="h-frame">Magnetogram & Solar Atmosphere</h2>
+        <span class="hint" id="frameStamp"></span>
+      </div>
+
+      <!-- สลับเลเยอร์ชั้นบรรยากาศแบบ Pills -->
+      <div class="layer-pills" id="layerPills" role="radiogroup" aria-label="เลือกชั้นบรรยากาศ">
+        <button type="button" class="layer-pill is-active" data-layer="mag" title="โฟโตสเฟียร์: แผนที่ขั้วแม่เหล็ก (HMI)">
+          <span class="layer-pill__dot layer-pill__dot--mag"></span> Magnetogram
+        </button>
+        <button type="button" class="layer-pill" data-layer="1600" title="โฟโตสเฟียร์บน / ทรานซิชัน: AIA 1600 Å">
+          <span class="layer-pill__dot layer-pill__dot--1600"></span> AIA 1600 Å
+        </button>
+        <button type="button" class="layer-pill" data-layer="304" title="โครโมสเฟียร์: AIA 304 Å">
+          <span class="layer-pill__dot layer-pill__dot--304"></span> AIA 304 Å
+        </button>
+        <button type="button" class="layer-pill" data-layer="171" title="โคโรนาชั้นล่าง: AIA 171 Å">
+          <span class="layer-pill__dot layer-pill__dot--171"></span> AIA 171 Å
+        </button>
+      </div>
+
+      <div class="controls controls--frame">
+        <button class="icon-btn" id="framePrev" type="button" aria-label="เฟรมก่อนหน้า" title="เฟรมก่อนหน้า (ลูกศรซ้าย)">‹</button>
+        <button class="icon-btn icon-btn--play" id="framePlay" type="button" aria-label="เล่น Timelapse" title="เล่น/หยุดภาพเคลื่อนไหว (Spacebar)">▶</button>
+        <label class="field field--grow">
+          <span class="sr-only">เลือกเฟรม</span>
+          <select id="frameSelect"><option>ยังไม่มีเฟรม</option></select>
+        </label>
+        <button class="icon-btn" id="frameNext" type="button" aria-label="เฟรมถัดไป" title="เฟรมถัดไป (ลูกศรขวา)">›</button>
+        <label class="field hidden">
+          <span class="field__label">เลเยอร์</span>
+          <select id="layerSelect">
+            <option value="mag">HMI magnetogram</option>
+          </select>
+        </label>
+        <label class="switch" title="เปิดเพื่อใช้ mask จริงจาก SHARP (Ground Truth) หรือปิดเพื่อใช้ mask ที่ U-Net ทำนาย">
+          <input type="checkbox" id="useTruth">
+          <span>mask SHARP (Ground Truth)</span>
+        </label>
+      </div>
+      <div id="framePanel" class="frame">
+        <p class="empty">ยังไม่มีเฟรมภาพ — รัน <code>backend/scripts/download_images.py</code> แล้ว <code>backend/scripts/build_masks.py</code></p>
+      </div>
+    </section>
+
+    <!-- ── ความเข้มแสง & สนามแม่เหล็กราย AR สกัดจาก U-Net mask ─────────── -->
+    <section class="card card--extraction" aria-labelledby="h-extraction" data-reveal>
+      <div class="card__head">
+        <div class="card__head-title">
+          <h2 id="h-extraction">ความเข้มแสง &amp; สนามแม่เหล็กจาก U-Net Mask ราย AR</h2>
+          <span class="hint" id="extractionHint">สกัดจากพิกเซลภายใน mask ของ AR แต่ละดวง</span>
+        </div>
+      </div>
+      <div class="controls controls--extraction">
+        <label class="field">
+          <span class="field__label">เลือก AR</span>
+          <select id="extractionArSelect">
+            <option value="all">ทุก AR (รวม)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">เมตริก</span>
+          <select id="extractionMetricSelect">
+            <option value="all_aia" selected>ทุกชั้นบรรยากาศ + สนามแม่เหล็ก</option>
+            <option value="b_peak">b_peak (max-in-mask / Gauss)</option>
+            <option value="171">AIA 171 Å (โคโรนา)</option>
+            <option value="304">AIA 304 Å (โครโมสเฟียร์)</option>
+            <option value="1600">AIA 1600 Å (โฟโตสเฟียร์)</option>
+            <option value="flux">ฟลักซ์แม่เหล็ก (Total Flux)</option>
+          </select>
+        </label>
+      </div>
+      <p class="proton__summary hidden" id="extractionNote"></p>
+      <div id="extractionChart" class="chart chart--extraction"></div>
+      <p class="hint extraction__caption">
+        เส้นประ = เวลาที่เกิด flare ในช่วงที่กรองไว้ (สีตามระดับ B&lt;C&lt;M&lt;X · ป้ายกำกับเฉพาะ M/X)
+      </p>
+    </section>
+
+    <!-- ── GOES X-ray light curve ───────────────────────────── -->
+    <section class="card card--wide" aria-labelledby="h-xray" data-reveal>
+      <div class="card__head">
+        <div class="card__head-title">
+          <h2 id="h-xray">GOES X-Ray Light Curve</h2>
+          <span class="hint" id="xrayHint"></span>
+        </div>
+        <button type="button" class="btn btn--sm btn--export" id="exportFlaresBtn" title="ดาวน์โหลดรายการ Flare ในช่วงนี้เป็นไฟล์ CSV">
+          <span>⬇</span> ส่งออก CSV
+        </button>
+      </div>
+      <div class="legend" id="goesLegend">
+        <span class="legend__item"><i class="legend__swatch legend__swatch--series"></i>ฟลักซ์ตามเวลา</span>
+        <span class="legend__item"><i class="legend__swatch legend__swatch--seq-1"></i>B</span>
+        <span class="legend__item"><i class="legend__swatch legend__swatch--seq-2"></i>C</span>
+        <span class="legend__item"><i class="legend__swatch legend__swatch--seq-3"></i>M</span>
+        <span class="legend__item"><i class="legend__swatch legend__swatch--seq-4"></i>X</span>
+        <span class="legend__note" id="xrayLegendNote">สีสว่างขึ้น = แรงขึ้น · เส้นสร้างจากเวลาเริ่ม–peak–สิ้นสุดของแต่ละเหตุการณ์ ไม่ใช่สัญญาณดิบรายนาที</span>
+      </div>
+      <div id="xrayChart" class="chart"></div>
+    </section>
+
+    <!-- ── ฟลักซ์โปรตอนรอบเวลาที่เกิด flare ─────────────────── -->
+    <!-- ซ่อนไว้ตั้งแต่แรก แล้ว app.js เปิดให้เมื่อ /api/health บอกว่ามีคลังโปรตอน -->
+    <section class="card card--wide hidden" aria-labelledby="h-proton" id="protonCard" data-reveal>
+      <div class="card__head">
+        <h2 id="h-proton">Proton flux รอบเวลาที่เกิด flare</h2>
+        <span class="hint" id="protonHint">ชี้เมาส์ที่จุด flare บนจานสุริยะหรือบนเส้น X-ray เพื่อดูตัวอย่าง · คลิกเพื่อตรึงไว้</span>
+      </div>
+      <p class="proton__summary" id="protonSummary"></p>
+      <div class="legend" id="protonLegend">
+        <span class="legend__item"><i class="legend__swatch legend__swatch--pflux-1"></i>&gt; 1 MeV</span>
+        <span class="legend__item"><i class="legend__swatch legend__swatch--pflux-2"></i>&gt; 10 MeV</span>
+        <span class="legend__item"><i class="legend__swatch legend__swatch--pflux-3"></i>&gt; 50 MeV</span>
+        <span class="legend__item"><i class="legend__swatch legend__swatch--pflux-4"></i>&gt; 100 MeV</span>
+        <span class="legend__note">ช่องพลังงานเป็นแบบสะสม (&gt;1 ครอบ &gt;10 ครอบ &gt;50) · ช่องว่างบนเส้น = ไม่มีข้อมูล ไม่ใช่ศูนย์ · S1–S5 คือมาตราพายุรังสีสุริยะของ NOAA วัดที่ &gt;10 MeV</span>
+      </div>
+      <div id="protonChart" class="chart"></div>
+    </section>
+
+    <!-- ── ความเสี่ยงล่าสุดของ AR ที่เลือก ──────────────────── -->
+    <section class="card card--gauge" aria-labelledby="h-risk" data-reveal>
+      <div class="card__head"><h2 id="h-risk">ความเสี่ยงล่าสุด</h2></div>
+      <div id="riskPanel" class="risk">
+        <p class="empty">เลือก active region จากตารางด้านขวา</p>
+      </div>
+    </section>
+
+    <!-- ── ตารางเลือก active region ─────────────────────────── -->
+    <section class="card card--list" aria-labelledby="h-list" data-reveal>
+      <div class="card__head">
+        <h2 id="h-list">Active Region</h2>
+        <label class="switch">
+          <input type="checkbox" id="onlyFlaring" checked>
+          <span>เฉพาะที่เคยเกิด flare</span>
+        </label>
+      </div>
+      <input type="search" id="harpSearch" class="search" placeholder="ค้นหาหมายเลข HARP หรือ NOAA AR…" aria-label="ค้นหา active region">
+      <div class="table-wrap">
+        <table class="harp-table">
+          <thead>
+            <tr>
+              <th><button type="button" class="sort" data-sort="harpnum">HARP</button></th>
+              <th><button type="button" class="sort" data-sort="noaa_ar">NOAA</button></th>
+              <th class="num"><button type="button" class="sort" data-sort="n_samples">ตัวอย่าง</button></th>
+              <th class="num"><button type="button" class="sort" data-sort="n_positive" data-active>flare</button></th>
+            </tr>
+          </thead>
+          <tbody id="harpList">
+            <tr><td colspan="4" class="empty">กำลังโหลด…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="hint" id="harpCount"></p>
+    </section>
+
+    <!-- ── attention + SHARP parameters ─────────────────────── -->
+    <section class="card card--wide" aria-labelledby="h-attn" data-reveal>
+      <div class="card__head">
+        <h2 id="h-attn">โมเดลสนใจช่วงเวลาไหน</h2>
+        <span class="hint">น้ำหนัก attention ย้อนหลัง 24 ชม.</span>
+      </div>
+      <div id="attentionChart" class="chart chart--short"></div>
+
+      <div class="card__head card__head--sub">
+        <h2>SHARP parameters ล่าสุด</h2>
+        <span class="hint">ค่าดิบก่อน normalize</span>
+      </div>
+      <div id="featureList" class="feature-grid">
+        <p class="empty">เลือก active region เพื่อดูค่า</p>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- ══ ABOUT ══════════════════════════════════════════════════ -->
+<section class="about" id="about">
+  <div class="about__inner">
+
+    <header class="about__head" data-reveal>
+      <h2>เกี่ยวกับงานนี้</h2>
+      <p class="hint">แบ่งการทำงานเป็น 3 ส่วน — PyTorch + FastAPI</p>
+    </header>
+
+    <div class="pillars">
+      <article class="pillar" data-reveal>
+        <p class="pillar__index">01 <span>Segmentation</span></p>
+        <h3>U-Net</h3>
+        <p>แบ่งส่วน active region จากภาพ magnetogram เต็มดวงของ SDO/HMI โดยใช้ bitmap จาก SHARP เป็น ground truth</p>
+      </article>
+      <article class="pillar" data-reveal>
+        <p class="pillar__index">02 <span>Tracking</span></p>
+        <h3>Hungarian + differential rotation</h3>
+        <p>จับคู่ AR แต่ละดวงข้ามเวลา โดยชดเชยการหมุนของดวงอาทิตย์ที่เร็วไม่เท่ากันในแต่ละละติจูด</p>
+      </article>
+      <article class="pillar" data-reveal>
+        <p class="pillar__index">03 <span>Forecasting</span></p>
+        <h3>LSTM</h3>
+        <p>ทำนายโอกาสเกิด flare ≥M1.0 ภายใน 24 ชม. จาก SHARP magnetic parameters ย้อนหลัง 24 จุด</p>
+      </article>
+    </div>
+
+    <div class="results">
+
+      <div class="results__block" data-reveal>
+        <h3 class="results__title">ผลการทดลอง <span>flare ≥M1.0 ใน 24 ชม.</span></h3>
+        <div class="table-wrap table-wrap--auto">
+          <table class="result-table">
+            <thead>
+              <tr>
+                <th>โมเดล</th>
+                <th class="num">val TSS</th>
+                <th class="num">test TSS</th>
+                <th class="num">test AUC</th>
+                <th class="num">test recall</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>LSTM <span class="hint">ประวัติ 24 ชม.</span></td>
+                <td class="num">0.845</td>
+                <td class="num strong" id="lstmTss">0.472</td>
+                <td class="num">0.937</td>
+                <td class="num">0.51</td>
+              </tr>
+              <tr>
+                <td>Logistic regression <span class="hint">ค่า ณ เวลาเดียว</span></td>
+                <td class="num">0.827</td>
+                <td class="num strong">0.908</td>
+                <td class="num">0.988</td>
+                <td class="num">0.97</td>
+              </tr>
+              <tr>
+                <td>U-Net <span class="hint">Dice / IoU</span></td>
+                <td class="num" colspan="4" id="unetDice">ยังไม่ได้เทรน</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          logistic regression ที่ใช้ค่า ณ เวลาเดียวทำได้ดีกว่า LSTM ที่เห็นประวัติ 24 ชม. — เป็นผลที่วัดได้จริง
+          สาเหตุหลักคือ test set มี positive เพียง 37 ตัว และตัวอย่างที่เป็นอิสระต่อกันจริงคือจำนวน HARP ที่เคยเกิด flare (~114 ดวง) ไม่ใช่จำนวน sample
+        </p>
+      </div>
+
+      <div class="results__block" data-reveal>
+        <h3 class="results__title">การแบ่งข้อมูล <span>HARP-disjoint</span></h3>
+        <ul class="splits">
+          <li class="split">
+            <span class="split__name">train</span>
+            <span class="split__bar"><i style="width:85.2%"></i></span>
+            <span class="split__num">208,033</span>
+            <span class="split__pos">3,854 · 1.85%</span>
+          </li>
+          <li class="split">
+            <span class="split__name">val</span>
+            <span class="split__bar"><i style="width:10.8%"></i></span>
+            <span class="split__num">26,255</span>
+            <span class="split__pos">408 · 1.55%</span>
+          </li>
+          <li class="split">
+            <span class="split__name">test</span>
+            <span class="split__bar"><i style="width:4.0%"></i></span>
+            <span class="split__num">9,886</span>
+            <span class="split__pos">37 · 0.37%</span>
+          </li>
+        </ul>
+        <p class="note">
+          แบ่งตามเวลา <em>และ</em> ให้ HARP ไม่ซ้ำข้าม split · กรอง <code>|LON| &lt; 68°</code> กับ <code>QUALITY == 0</code> ·
+          คำนวณ normalization statistics จาก train set เท่านั้น
+        </p>
+      </div>
+
+      <div class="results__block results__block--wide" data-reveal>
+        <div class="cm__head">
+          <h3 class="results__title">Confusion Matrix <span>ปรับ threshold ดูการแลกเปลี่ยนระหว่าง hit กับ false alarm ได้ทันที</span></h3>
+          <div class="cm__toggles">
+            <div class="layer-pills cm__toggle-group" role="radiogroup" aria-label="เลือกโมเดล">
+              <button type="button" class="layer-pill is-active" data-cm-model="lstm">LSTM</button>
+              <button type="button" class="layer-pill" data-cm-model="baseline">Logistic baseline</button>
+            </div>
+            <div class="layer-pills cm__toggle-group" role="radiogroup" aria-label="เลือกชุดข้อมูล">
+              <button type="button" class="layer-pill" data-cm-split="val">val</button>
+              <button type="button" class="layer-pill is-active" data-cm-split="test">test</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="cmBody"><p class="empty">กำลังโหลด…</p></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <span id="modelSummary">—</span>
+  <a href="/docs" target="_blank" rel="noopener">เอกสาร API ↗</a>
+</footer>
+
+<script src="/static/app.js?v=17"></script>
+</body>
+</html>
