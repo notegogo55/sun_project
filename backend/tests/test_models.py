@@ -93,8 +93,19 @@ class TestUNet:
         """เริ่มด้วยการทายว่า 'ไม่ใช่ AR' เพราะ AR กินพื้นที่เพียง ~2% ของพิกเซล"""
         assert model.out_conv.bias.item() < -2.0
 
-    def test_initial_predictions_are_mostly_negative(self, model):
-        """ผลจากการตั้ง bias ข้างต้น — ป้องกัน loss ระเบิดใน epoch แรก"""
+    def test_initial_predictions_are_mostly_negative(self):
+        """ผลจากการตั้ง bias ข้างต้น — ป้องกัน loss ระเบิดใน epoch แรก
+
+        ไม่ใช้ fixture ``model`` ร่วมกับ test อื่นในคลาสนี้ เพราะต้อง seed **ก่อน**
+        สร้างโมเดล ไม่ใช่แค่ก่อนสุ่ม input — fixture เล็กและตื้น (base_channels=4)
+        จงใจให้ test เร็ว แต่ความแคบนี้ทำให้ conv weight ที่สุ่มจาก Kaiming init มี
+        ความแปรปรวนต่อพิกเซลสูงกว่าโมเดลจริงตามสัดส่วน วัดจริง 30 seed มี 1 ครั้งที่
+        mean หลุด 0.2 (0.2685) แม้ bias -4.0 จะยังครอบงำอยู่เกือบทุกครั้ง จึง seed ทั้ง
+        การสร้างโมเดลและ input ให้ deterministic แทนที่จะปล่อยให้ CI แดงเป็นครั้งคราว
+        โดยไม่มีอะไรเปลี่ยนในโค้ดจริง
+        """
+        torch.manual_seed(0)
+        model = UNet(base_channels=4, depth=2)
         probs = torch.sigmoid(model(torch.randn(2, 1, 64, 64)))
         assert probs.mean().item() < 0.2
 

@@ -50,10 +50,12 @@ class TestSystemEndpoints:
         assert "/api/goes" in schema["paths"]
         assert "/api/track" in schema["paths"]
 
-    def test_index_page_is_served(self, client):
+    def test_root_is_not_served_by_backend(self, client):
+        """backend เป็น API ล้วนหลังแยก container — frontend (nginx) เป็นคนเสิร์ฟหน้าเว็บที่
+        รากแทน (ดู frontend/nginx.conf และ frontend/vite.config.js) ดังนั้น "/" ที่ backend
+        ต้องไม่มี route ให้ ไม่ใช่คืนหน้าเว็บเหมือนตอนที่ยังฝังอยู่ใต้ FastAPI"""
         response = client.get("/")
-        assert response.status_code == 200
-        assert "sunseg" in response.text
+        assert response.status_code == 404
 
 
 class TestGracefulDegradation:

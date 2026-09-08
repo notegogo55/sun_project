@@ -422,7 +422,14 @@ def intensity_series(
         series_out.append(
             IntensitySeriesOut(
                 track_id=track.track_id,
-                label=f"AR {track.track_id}" if track.track_id else f"AR {rank}",
+                # label เป็นชื่อที่ "แสดงบนกราฟ" อันดับตามพื้นที่ในคำตอบนี้เท่านั้น
+                # (AR 1 = ใหญ่สุด) ไม่ใช่ track.track_id ซึ่งเป็นตัวนับที่โตขึ้นเรื่อยๆ
+                # ตลอดการไล่เฟรม — ที่ cadence รายสัปดาห์ การจับคู่ AR ข้ามเฟรมมักพลาด
+                # (ดู docstring ด้านบน) จึงสร้าง track ใหม่บ่อย ทำให้ track_id ของ AR ที่
+                # ใหญ่ที่สุดอาจเป็นเลขหลักร้อยได้ ใช้เป็น label ตรงๆ จะทำให้ผู้ใช้เข้าใจผิด
+                # ว่าเป็นหมายเลข AR จริง (track_id ยังส่งแยกเป็น field ของตัวเองสำหรับ
+                # อ้างอิงที่ต้องการความคงที่ เช่น ตัวเลือกใน dropdown ของหน้าเว็บ)
+                label=f"AR {rank}",
                 n_points=len(track.points),
                 max_area_px=max((p.area_px for p in track.points), default=0),
                 times=times,
