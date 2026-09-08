@@ -1,10 +1,13 @@
-# Dockerfile สำหรับ *ให้บริการ* webapp (ไม่ใช่สำหรับเทรน)
+# Dockerfile สำหรับ backend เท่านั้น (API — ไม่เสิร์ฟไฟล์ frontend อีกต่อไป)
 #
 # ใช้ PyTorch เวอร์ชัน CPU เพราะการ inference ของโปรเจคนี้เบามาก:
 # LSTM มีเพียง ~7,000 พารามิเตอร์ และ U-Net รันภาพ 512x512 ทีละภาพ
 # การใส่ CUDA runtime เข้ามาจะทำให้ image ใหญ่ขึ้นราว 2 GB โดยแทบไม่ได้ประโยชน์
 #
 # การเทรนยังคงทำบนเครื่องที่มี GPU ตามขั้นตอนใน README
+#
+# build จาก root ของ repo เสมอ (ต้องการ README.md ที่อยู่นอก backend/):
+#     docker build -f backend/Dockerfile -t sunseg-backend .
 
 FROM python:3.12-slim AS base
 
@@ -19,24 +22,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# backend/ และ frontend/ แยกกันชัดเจนในโค้ด — ใน image ก็จำลองโครงสร้างเดียวกัน
 # WORKDIR คือ /app/backend เพื่อให้ path resolution ใน sunseg/config.py และ app/main.py
-# (ซึ่งคำนวณ PROJECT_ROOT จาก parent ของ backend/) ตรงกับตำแหน่ง mount ของ data/, artifacts/, frontend/ ที่ /app
+# (ซึ่งคำนวณ PROJECT_ROOT จาก parent ของ backend/) ตรงกับตำแหน่ง mount ของ data/, artifacts/ ที่ /app
 WORKDIR /app/backend
 
 # ติดตั้ง PyTorch เวอร์ชัน CPU ก่อน เพื่อไม่ให้ pip ดึงเวอร์ชัน CUDA มาให้
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 
 # คัดลอกเฉพาะไฟล์ที่ระบุ dependency ก่อน เพื่อให้ layer cache ทำงานได้ดี
-# README.md อยู่นอก backend/ (pyproject.toml อ้างอิงเป็น ../README.md)
+# README.md อยู่นอก backend/ (pyproject.toml อ้างอิงเป็น ../README.md) — hatchling
+# รุ่นใหม่ๆ ปฏิเสธ readme path ที่ชี้ออกนอก project directory แม้ไฟล์จะมีอยู่จริงก็ตาม
+# จึงต้อง pin ไว้ที่รุ่นที่ยังไม่บังคับกฎนี้ (ยืนยันแล้วว่า build ผ่านที่ 1.18.0)
 COPY README.md /app/README.md
 COPY backend/pyproject.toml ./
 COPY backend/src/ ./src/
-RUN pip install .
+RUN pip install "hatchling==1.18.0" && pip install --no-build-isolation .
 
 COPY backend/app/ ./app/
 COPY backend/configs/ ./configs/
-COPY frontend/ /app/frontend/
 
 # artifacts (โมเดลที่เทรนแล้ว) และ data ถูก mount เข้ามาตอนรัน ไม่ได้ฝังใน image
 VOLUME ["/app/artifacts", "/app/data"]

@@ -1,0 +1,77 @@
+import { useMemo } from "react";
+import { useApp } from "../../state/AppContext.js";
+import { THEME } from "../../lib/theme.js";
+import { basePlotLayout, PLOT_CONFIG } from "../../lib/plotConstants.js";
+import { formatValue } from "../../lib/format.js";
+import { useReveal } from "../../hooks/useReveal.js";
+import PlotlyChart from "../PlotlyChart.jsx";
+
+export default function AttentionCard() {
+  const { risk } = useApp();
+  const revealRef = useReveal();
+  const latest = risk.data?.latest ?? null;
+
+  const { traces, layout, empty } = useMemo(() => {
+    if (!latest?.attention?.length) return { traces: [], layout: null, empty: true };
+
+    const n = latest.attention.length;
+    // แกน x เป็นชั่วโมง "ก่อนเวลาออกพยากรณ์" — 0 คือปัจจุบัน, -23 คือเมื่อวาน
+    const hours = latest.attention.map((_, i) => -(n - 1 - i));
+    const peak = Math.max(...latest.attention);
+
+    return {
+      empty: false,
+      traces: [{
+        x: hours,
+        y: latest.attention,
+        type: "bar",
+        marker: {
+          color: latest.attention.map((w) => (w >= peak * 0.92 ? THEME.brand : THEME.series1)),
+        },
+        hovertemplate: "%{x} ชม. ก่อนหน้า<br>น้ำหนัก %{y:.3f}<extra></extra>",
+      }],
+      layout: {
+        ...basePlotLayout(),
+        margin: { l: 46, r: 14, t: 6, b: 34 },
+        xaxis: { ...basePlotLayout().xaxis, title: "ชั่วโมงก่อนเวลาพยากรณ์" },
+        yaxis: { ...basePlotLayout().yaxis, title: "น้ำหนัก" },
+        bargap: 0.25,
+      },
+    };
+  }, [latest]);
+
+  return (
+    <section ref={revealRef} className="card card--wide" aria-labelledby="h-attn" data-reveal>
+      <div className="card__head">
+        <h2 id="h-attn">โมเดลสนใจช่วงเวลาไหน</h2>
+        <span className="hint">น้ำหนัก attention ย้อนหลัง 24 ชม.</span>
+      </div>
+      <PlotlyChart
+        id="attentionChart"
+        className="chart chart--short"
+        data={traces}
+        layout={layout}
+        config={PLOT_CONFIG}
+        empty={empty}
+        emptyMessage=""
+      />
+
+      <div className="card__head card__head--sub">
+        <h2>SHARP parameters ล่าสุด</h2>
+        <span className="hint">ค่าดิบก่อน normalize</span>
+      </div>
+      <div id="featureList" className="feature-grid">
+        {!latest?.features ? (
+          <p className="empty">เลือก active region เพื่อดูค่า</p>
+        ) : (
+          Object.entries(latest.features).map(([name, value]) => (
+            <div className="feature" key={name}>
+              <span className="feature__name">{name}</span>
+              <span className="feature__value">{formatValue(value)}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}

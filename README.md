@@ -74,10 +74,16 @@ python backend/scripts/plot_aia_alignment.py               # << ตรวจด�
 python backend/scripts/download_aia.py                     # แล้วค่อยดึงเต็มช่วง (~45 นาที)
 python backend/scripts/download_aia.py --case-study         # เฟรม case study 2024 (อยู่นอก time_range)
 
-# 7) เปิด webapp — backend คือ FastAPI (backend/app), frontend คือ static UI (frontend/)
-uvicorn app.main:app --app-dir backend --reload
-# เปิด http://localhost:8000  (API docs ที่ /docs)
+# 7) เปิด webapp — backend (FastAPI, backend/app) กับ frontend (React + Vite, frontend/)
+#    เป็นคนละ process/container เสมอ ต้องรันคู่กัน
+uvicorn app.main:app --app-dir backend --reload &   # backend: http://localhost:8000 (API docs ที่ /docs)
+cd frontend && npm install && npm run dev            # frontend: http://localhost:5173 (proxy /api ให้เอง)
 ```
+
+> **Docker (แนะนำถ้าจะรันแบบ deploy จริง)**: `docker compose up --build` สร้างและรันสองคอนเทนเนอร์
+> แยกกันชัดเจน — `backend` (FastAPI พอร์ต 8000) กับ `frontend` (React build เสิร์ฟด้วย nginx พอร์ต
+> 3000, proxy `/api`/`/docs` ไปที่ `backend` ให้เอง) เปิด http://localhost:3000 ดูรายละเอียดที่
+> `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`
 
 > **ไม่จำเป็นต้องทำขั้นตอน 1–6 ให้ครบก่อนถึงจะเปิดเว็บได้** — แอปออกแบบให้เปิดได้เสมอแม้ยังไม่มี
 > โมเดลหรือข้อมูลบางส่วน ส่วนที่ยังไม่พร้อมจะขึ้นสถานะ "ยังไม่พร้อม" พร้อมบอกว่าต้องรันสคริปต์ไหนต่อ
@@ -105,16 +111,22 @@ python backend/scripts/plot_aia_alignment.py  # ภาพ AIA วางทับ
 > **ทำไม LSTM ก่อน U-Net?** LSTM ใช้แค่ข้อมูลตาราง (ไม่กี่ร้อย MB) เทรนเสร็จในไม่กี่นาที
 > จึงยืนยันได้เร็วว่า labeling pipeline ถูกต้อง ก่อนจะลงทุนหลายชั่วโมงไปกับการดาวน์โหลดภาพ
 
-## เปิด webapp ด้วย Docker (ไม่ต้องติดตั้ง Python เอง)
+## เปิด webapp ด้วย Docker (ไม่ต้องติดตั้ง Python/Node เอง)
 
-ใช้ตอนแค่อยาก **ดู** ผลบนเครื่องอื่น — image นี้ให้บริการ webapp อย่างเดียว ไม่ใช้เทรนโมเดล
+ใช้ตอนแค่อยาก **ดู** ผลบนเครื่องอื่น — สอง container นี้ให้บริการ webapp อย่างเดียว ไม่ใช้เทรนโมเดล
 (เทรนต้องทำบนเครื่องที่มี GPU ตามขั้นตอนด้านบนก่อน แล้วโมเดล/ข้อมูลถูก mount แบบอ่านอย่างเดียว
 เข้า container ทำให้เปลี่ยนโมเดลได้โดยไม่ต้อง build image ใหม่):
 
 ```powershell
 docker compose up --build
-# เปิด http://localhost:8000
+# เปิด http://localhost:3000  (frontend — nginx proxy /api ไปที่ backend ให้เอง)
+# เอกสาร API อยู่ที่ http://localhost:8000/docs (backend โดยตรง)
 ```
+
+`docker compose ps` ควรเห็นสอง container: `sunseg-backend` (FastAPI, พอร์ต 8000) กับ
+`sunseg-frontend` (nginx เสิร์ฟ React build, พอร์ต 3000) — แยกกันชัดเจน build/scale/restart
+ได้อิสระจากกัน browser คุยกับ frontend container อย่างเดียว ส่วน frontend เป็นคน proxy
+`/api` ต่อไปที่ backend ผ่าน Docker network ภายใน (ดู `frontend/nginx.conf`)
 
 ---
 
@@ -328,7 +340,7 @@ test set ที่มี positive ถึง 7,368 ตัว (มี.ค. 2017 �
 
 ## โครงสร้างโปรเจค
 
-แยก `backend/` (Python — โมเดล, data pipeline, FastAPI) กับ `frontend/` (HTML/CSS/JS ล้วน)
+แยก `backend/` (Python — โมเดล, data pipeline, FastAPI) กับ `frontend/` (React + Vite)
 ออกจากกันชัดเจนที่ระดับ root ส่วน `data/` และ `artifacts/` อยู่นอกทั้งสองฝั่งเพราะเป็น
 runtime data ไม่ใช่โค้ด (mount เป็น volume ใน Docker)
 
@@ -342,11 +354,18 @@ backend/
     models/         U-Net, LSTM
     tracking/       detection, differential rotation, tracker
     inference/      pipeline รวม 3 ส่วน
-  app/              FastAPI backend (ให้บริการ API + เสิร์ฟไฟล์จาก frontend/)
+  app/              FastAPI backend — API เท่านั้น ไม่รู้จักไฟล์ frontend เลย
   scripts/          CLI entrypoints
   tests/            pytest
   pyproject.toml
-frontend/           HTML/CSS/JS ล้วน — ไม่มี build step
+  Dockerfile        build จาก root ของ repo (ต้องการ README.md นอก backend/)
+frontend/           React + Vite — คนละ container/process จาก backend เสมอ
+  src/
+    state/            AppProvider — ศูนย์กลาง state ของแอป (เทียบเท่า `state` object เดิม)
+    components/       แบ่งตามแผงของ dashboard (Hero, Dashboard/, About/)
+    lib/              เรียก API, ค่าคงที่ของกราฟ, ตัวช่วยจัดรูปข้อความ
+  Dockerfile        build เป็น nginx image (multi-stage: npm build -> nginx serve)
+  nginx.conf        proxy /api, /docs, /openapi.json ไปที่ backend container
 data/               ดาวน์โหลด/ประมวลผลจาก JSOC (อยู่นอก backend/ โดยเจตนา)
   processed/frames/   คู่ (magnetogram, mask) ขนาด 512px — input ของ U-Net
   processed/aia/      ภาพ AIA รายช่อง วางบนกริดเดียวกับ frames/ แล้ว (DN/s)

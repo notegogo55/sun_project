@@ -1,16 +1,19 @@
-# รัน webapp ด้วย Docker:
+# รัน webapp ด้วย Docker — backend กับ frontend เป็นคนละ container ชัดเจน:
 #
 #     docker compose up --build
 #
-# เปิด http://localhost:8000
+# เปิด http://localhost:3000  (frontend — nginx proxy /api ไปที่ backend ให้เอง)
+# เอกสาร API อยู่ที่ http://localhost:8000/docs (backend โดยตรง)
 #
 # หมายเหตุ: ต้องเทรนโมเดลบนเครื่องที่มี GPU ก่อน (ดู README) โมเดลและข้อมูลถูก
-# mount เข้าไปแบบอ่านอย่างเดียว ทำให้เปลี่ยนโมเดลได้โดยไม่ต้อง build image ใหม่
+# mount เข้า backend แบบอ่านอย่างเดียว ทำให้เปลี่ยนโมเดลได้โดยไม่ต้อง build image ใหม่
 
 services:
-  sunseg:
-    build: .
-    container_name: sunseg
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: sunseg-backend
     ports:
       - "8000:8000"
     volumes:
@@ -19,4 +22,15 @@ services:
     environment:
       # เส้นทางภายใน container — ต้องตรงกับที่ mount ไว้ข้างบน
       - PYTHONUTF8=1
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: sunseg-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
     restart: unless-stopped

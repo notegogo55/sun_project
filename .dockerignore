@@ -1,0 +1,15 @@
+# backend/Dockerfile ใช้ context เป็น root ของ repo (ต้องการ README.md ที่อยู่นอก
+# backend/) — ไฟล์/โฟลเดอร์ใหญ่ที่ไม่เกี่ยวกับ backend ไม่ควรถูกส่งเข้า build context เลย
+.git
+.venv
+data
+artifacts
+runs
+.pytest_cache
+.ruff_cache
+.scratch
+frontend/node_modules
+frontend/dist
+*.pt
+*.pth
+*.ckpt

@@ -1,10 +1,15 @@
-"""FastAPI application สำหรับ sunseg
+"""FastAPI application สำหรับ sunseg — ให้บริการเฉพาะ API เท่านั้น
+
+frontend/ เป็นโปรเจค Vite + React แยกต่างหากที่รันเป็นคนละ container/process เสมอ
+(nginx ตอน deploy จริง, `npm run dev` ตอนพัฒนา) ตัวมันเองเป็นคน proxy คำขอ /api มาที่นี่
+ฝั่งนี้จึงไม่ต้องรู้จักหรือเสิร์ฟไฟล์ frontend เลย — ดู frontend/nginx.conf และ
+frontend/vite.config.js (dev server proxy) สำหรับการต่อสายทั้งสองฝั่งเข้าด้วยกัน
 
 รันด้วย::
 
     uvicorn app.main:app --reload
 
-แล้วเปิด http://localhost:8000 (เอกสาร API อัตโนมัติอยู่ที่ /docs)
+แล้วเปิด http://localhost:8000/docs (เอกสาร API อัตโนมัติ)
 """
 
 from __future__ import annotations
@@ -19,8 +24,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT / "src"))
 
 from fastapi import FastAPI, Request  # noqa: E402
-from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
-from fastapi.staticfiles import StaticFiles  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 
 from sunseg.logging_utils import setup_logging  # noqa: E402
 
@@ -29,10 +33,6 @@ from .schemas import HealthResponse, ModelInfoResponse  # noqa: E402
 from .services import AppServices  # noqa: E402
 
 logger = logging.getLogger("app")
-
-# frontend/ อยู่ที่ root ของ repo แยกจาก backend/ โดยเจตนา
-FRONTEND_DIR = BACKEND_ROOT.parent / "frontend"
-STATIC_DIR = FRONTEND_DIR
 
 
 @asynccontextmanager
@@ -103,11 +103,3 @@ async def runtime_error_handler(request: Request, exc: RuntimeError):
     """
     logger.warning("%s -> %s", request.url.path, exc)
     return JSONResponse(status_code=503, content={"detail": str(exc)})
-
-
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-    @app.get("/", include_in_schema=False)
-    def index():
-        return FileResponse(STATIC_DIR / "index.html")
