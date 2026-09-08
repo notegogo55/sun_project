@@ -1,7 +1,9 @@
 # Data — ห้าม commit (ใหญ่มากและดาวน์โหลดใหม่ได้)
-data/
-artifacts/
-runs/
+# ต้องยึด root (/data/) ไม่งั้นจะจับ backend/src/sunseg/data/ (แพ็กเกจโค้ด) ไปด้วย —
+# เคยเกิดมาแล้วจริง: ทั้งแพ็กเกจไม่เคยถูก commit เลยตั้งแต่ initial commit เพราะบรรทัดนี้
+/data/
+/artifacts/
+/runs/
 *.fits
 *.fits.gz
 *.npy
@@ -28,3 +30,7 @@ desktop.ini
 
 # Notebooks
 .ipynb_checkpoints/
+
+# Frontend (Vite + React) — build output, ไม่ commit node_modules/dist
+frontend/node_modules/
+frontend/dist/
