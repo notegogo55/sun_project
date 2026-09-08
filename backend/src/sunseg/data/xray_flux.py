@@ -40,6 +40,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -121,11 +122,12 @@ class XrayFluxStore:
                 return matches[-1], sat  # หลาย version เอาตัวล่าสุด (เรียงชื่อ = เรียง version)
         return None
 
-    def series(self, start: datetime, end: datetime) -> XraySeries:
-        """ฟลักซ์ช่อง 1-8 Å ตั้งแต่ ``start`` ถึง ``end`` (รวมขอบทั้งสองด้าน)
-
-        อ่านทีละไฟล์รายวัน (ไฟล์ละ ~1,440 แถว เปิดเร็ว) แล้วต่อกัน — ไม่ต้องมี cache
-        ต่างหากเหมือน proton เพราะไฟล์เล็กพอที่จะเปิดสดทุกคำขอได้โดยไม่กระทบ latency
+    def _read_raw(self, start: datetime, end: datetime) -> tuple[np.ndarray, np.ndarray]:
+        """อ่านทุกไฟล์รายวันในช่วง ต่อกันโดยไม่ตัดขอบ/ไม่ยุบข้อมูล — ตัวช่วยภายในที่ทั้ง
+        ``series()`` (ตัดขอบ + ยุบด้วย _decimate_keep_peaks สำหรับวาดกราฟ) และ
+        ``bin_series()`` (ยุบลงกริดด้วยสถิติต่อ bin สำหรับ dataset) ใช้ร่วมกัน — สอง
+        ทางนี้ต้องการข้อมูลดิบครบ ไม่ผ่านการยุบแบบ "เก็บพีค" ของ series() ซึ่งจะทำให้
+        สถิติต่อ bin ผิดเพราะข้อมูลส่วนใหญ่หายไปเหลือแต่พีค
         """
         times: list[np.ndarray] = []
         flux: list[np.ndarray] = []
@@ -141,18 +143,26 @@ class XrayFluxStore:
             day += timedelta(days=1)
 
         if not times:
-            return XraySeries(times=[], flux=[], decimated=False)
+            return np.array([], dtype="datetime64[s]"), np.array([], dtype="float64")
 
         all_times = np.concatenate(times)
         all_flux = np.concatenate(flux)
+        order = np.argsort(all_times)
+        return all_times[order], all_flux[order]
+
+    def series(self, start: datetime, end: datetime) -> XraySeries:
+        """ฟลักซ์ช่อง 1-8 Å ตั้งแต่ ``start`` ถึง ``end`` (รวมขอบทั้งสองด้าน)
+
+        อ่านทีละไฟล์รายวัน (ไฟล์ละ ~1,440 แถว เปิดเร็ว) แล้วต่อกัน — ไม่ต้องมี cache
+        ต่างหากเหมือน proton เพราะไฟล์เล็กพอที่จะเปิดสดทุกคำขอได้โดยไม่กระทบ latency
+        """
+        all_times, all_flux = self._read_raw(start, end)
+        if len(all_times) == 0:
+            return XraySeries(times=[], flux=[], decimated=False)
 
         mask = (all_times >= np.datetime64(start)) & (all_times <= np.datetime64(end))
         all_times = all_times[mask]
         all_flux = all_flux[mask]
-
-        order = np.argsort(all_times)
-        all_times = all_times[order]
-        all_flux = all_flux[order]
 
         decimated = len(all_times) > MAX_POINTS
         if decimated:
@@ -162,6 +172,64 @@ class XrayFluxStore:
             times=[t.astype("datetime64[s]").astype(datetime) for t in all_times],
             flux=[None if np.isnan(v) else float(v) for v in all_flux],
             decimated=decimated,
+        )
+
+    def bin_series(self, start: datetime, end: datetime, cadence_hours: int) -> pd.DataFrame:
+        """ยุบฟลักซ์รายนาทีลงกริดเวลาสม่ำเสมอทุก ``cadence_hours`` ชม. — ใช้ทำ feature
+        ของ sequence dataset ไม่ใช่วาดกราฟ (นั่นคือหน้าที่ของ ``series()``)
+
+        bin ที่มี timestamp ``t`` ครอบคลุมช่วง ``(t - cadence_hours ชม., t]`` — ค่าที่
+        "เห็นได้" ณ เวลาที่ออกพยากรณ์คือฟลักซ์ในอดีตที่ผ่านมาเท่านั้น ไม่ใช่ในอนาคต
+
+        คืนสถิติ 3 ค่าต่อ bin (median, max, min) ตามหลัก "เก็บครบ เลือกใช้ทีหลัง" เดียว
+        กับที่ ``sunseg.data.intensity`` ใช้กับความเข้มแสง พร้อมคอลัมน์ ``xray_log10_median``
+        ที่แปลง log10 ไว้ให้พร้อมใช้เป็น feature ตรงๆ — ต้องแปลงตรงนี้ ไม่ใช่ปล่อยให้
+        ``signed_log1p`` ทั่วไปที่ใช้กับ SHARP จัดการ เพราะฟลักซ์ดิบมีค่าเล็กมาก
+        (ระดับ 1e-9 ถึง 1e-3) ซึ่ง log1p(x) ≈ x ในช่วงนี้แทบไม่บีบอัด scale ให้เลย
+
+        bin ที่ไม่มีข้อมูลจริงเลยในช่วงของมัน (ไฟล์ขาด หรือทุกจุดถูกกรองเป็น NaN) ได้ NaN
+        ทั้ง 4 คอลัมน์ ไม่ใช่ 0 — 0 จะแปลว่า "ไม่มีรังสีเอกซ์เลย" ซึ่งผิด ความจริงคือ "ไม่รู้"
+        """
+        cadence = timedelta(hours=cadence_hours)
+        grid = pd.date_range(start, end, freq=cadence)
+
+        all_times, all_flux = self._read_raw(start - cadence, end)
+        finite = np.isfinite(all_flux)
+        times = all_times[finite]  # เรียงแล้วตั้งแต่ _read_raw — searchsorted ใช้ได้ตรงๆ
+        flux = all_flux[finite]
+
+        # แทนที่จะ mask อาร์เรย์ทั้งก้อนทีละ bin (O(n_bins * n_points) ซึ่งช้ามากเมื่อช่วง
+        # เวลายาวหลายปี — ข้อมูลรายนาทีหลายล้านจุดคูณเข้ากับ bin หลักพัน) ใช้ searchsorted
+        # หาขอบเขตของทุก bin ในคราวเดียว (O(n_bins log n_points)) แล้วให้แต่ละ bin แตะ
+        # เฉพาะช่วงของตัวเอง งานรวมทั้งหมดจึงเป็น O(n_points + n_bins log n_points)
+        edges_hi = grid.values.astype("datetime64[s]")
+        edges_lo = edges_hi - np.timedelta64(cadence)
+        lo_idx = np.searchsorted(times, edges_lo, side="right")  # times > lo
+        hi_idx = np.searchsorted(times, edges_hi, side="right")  # times <= hi
+
+        medians = np.full(len(grid), np.nan)
+        maxes = np.full(len(grid), np.nan)
+        mins = np.full(len(grid), np.nan)
+        for i in range(len(grid)):
+            if hi_idx[i] <= lo_idx[i]:
+                continue
+            vals = flux[lo_idx[i] : hi_idx[i]]
+            medians[i] = np.median(vals)
+            maxes[i] = np.max(vals)
+            mins[i] = np.min(vals)
+
+        positive = np.isfinite(medians) & (medians > 0)
+        log10_median = np.full_like(medians, np.nan)
+        log10_median[positive] = np.log10(medians[positive])
+
+        return pd.DataFrame(
+            {
+                "t_rec": grid,
+                "xray_median": medians,
+                "xray_max": maxes,
+                "xray_min": mins,
+                "xray_log10_median": log10_median,
+            }
         )
 
 

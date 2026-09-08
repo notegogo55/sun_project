@@ -11,6 +11,7 @@ from datetime import datetime
 
 import h5py
 import numpy as np
+import pandas as pd
 import pytest
 
 from sunseg.data.xray_flux import SATELLITE_SCALE, XrayFluxStore, _decimate_keep_peaks, _read_day
@@ -200,6 +201,113 @@ class TestMultiSatellite:
         _times, flux = _read_day(path, satellite="g14")
 
         assert flux == pytest.approx([1e-6], rel=1e-6)
+
+
+class TestBinSeries:
+    """ยุบฟลักซ์รายนาทีลงกริดสำหรับ sequence dataset (ticket 04) — ต่างจาก series()
+    ที่ยุบด้วย _decimate_keep_peaks สำหรับวาดกราฟ"""
+
+    def test_hand_computed_window_matches(self, tmp_path):
+        """หน้าต่างเดียว ค่าที่ได้ต้องตรงกับสถิติที่คำนวณมือ
+
+        วางจุดทั้งหมดไว้ **ในช่วงเวลา** ของ bin เดียว (ไม่แตะขอบเขตพอดี) เพื่อไม่ให้ปน
+        กับกรณีทดสอบขอบเขต (ดู test_bin_window_is_causal_past_only)
+        """
+        day = datetime(2014, 10, 18)
+        flux = [1e-6, 5e-6, 3e-6, 2e-6]
+        offsets_min = [60, 120, 180, 240]  # 01:00, 02:00, 03:00, 04:00 — ห่างจากขอบ bin ชัดเจน
+        seconds = [(day - _EPOCH).total_seconds() + m * 60 for m in offsets_min]
+        year_dir = tmp_path / "2014"
+        year_dir.mkdir(parents=True)
+        with h5py.File(year_dir / "sci_xrsf-l2-avg1m_g15_d20141018_v2-2-1.nc", "w") as handle:
+            handle.create_dataset("time", data=np.array(seconds, dtype="float64"))
+            handle.create_dataset("xrsb_flux", data=np.array(flux, dtype="float32"))
+            handle.create_dataset("xrsb_flag", data=np.array([0] * 4, dtype="uint16"))
+
+        store = XrayFluxStore(tmp_path)
+        df = store.bin_series(datetime(2014, 10, 19), datetime(2014, 10, 19), cadence_hours=24)
+
+        assert len(df) == 1
+        row = df.iloc[0]
+        assert row["xray_median"] == pytest.approx(float(np.median(flux)), rel=1e-6)
+        assert row["xray_max"] == pytest.approx(max(flux), rel=1e-6)
+        assert row["xray_min"] == pytest.approx(min(flux), rel=1e-6)
+        assert row["xray_log10_median"] == pytest.approx(np.log10(np.median(flux)), rel=1e-6)
+
+    def test_bin_window_is_causal_past_only(self, tmp_path):
+        """bin ที่ timestamp t ครอบ (t-cadence, t] — ค่าที่เกิด**หลัง**ขอบบนต้องตกไปอยู่
+        bin ถัดไป ไม่ใช่ bin นี้ (จุดออกพยากรณ์ต้องเห็นแต่อดีต ไม่เห็นอนาคต)"""
+        # 12:00:00 พอดี = ขอบบนของ bin แรก (00:00, 12:00] -> อยู่ใน bin แรก
+        # 12:01:00 = อยู่ bin ถัดไป (12:00, 24:00]
+        day = datetime(2014, 10, 18)
+        seconds = [
+            (day - _EPOCH).total_seconds() + 12 * 3600,  # 12:00:00 -> bin แรก
+            (day - _EPOCH).total_seconds() + 12 * 3600 + 60,  # 12:01:00 -> bin สอง
+        ]
+        year_dir = tmp_path / "2014"
+        year_dir.mkdir(parents=True)
+        with h5py.File(year_dir / "sci_xrsf-l2-avg1m_g15_d20141018_v2-2-1.nc", "w") as handle:
+            handle.create_dataset("time", data=np.array(seconds, dtype="float64"))
+            handle.create_dataset("xrsb_flux", data=np.array([1.0, 9.0], dtype="float32"))
+            handle.create_dataset("xrsb_flag", data=np.array([0, 0], dtype="uint16"))
+
+        store = XrayFluxStore(tmp_path)
+        df = store.bin_series(datetime(2014, 10, 18, 12), datetime(2014, 10, 19), cadence_hours=12)
+
+        first_bin = df[df["t_rec"] == datetime(2014, 10, 18, 12)].iloc[0]
+        second_bin = df[df["t_rec"] == datetime(2014, 10, 19, 0)].iloc[0]
+        assert first_bin["xray_median"] == pytest.approx(1.0, rel=1e-6)
+        assert second_bin["xray_median"] == pytest.approx(9.0, rel=1e-6)
+
+    def test_bad_flagged_points_excluded_from_bin_stats(self, tmp_path):
+        """จุดที่ flag ไม่ดีต้องไม่ถูกนับเข้าสถิติของ bin เลย ไม่ใช่นับเป็น 0"""
+        _write_day(tmp_path, datetime(2014, 10, 18), [1e-6, 100.0, 3e-6], [0, 1, 0])
+        store = XrayFluxStore(tmp_path)
+
+        df = store.bin_series(datetime(2014, 10, 19), datetime(2014, 10, 19), cadence_hours=24)
+
+        assert df.iloc[0]["xray_max"] == pytest.approx(3e-6, rel=1e-6)  # ไม่ใช่ 100.0
+
+    def test_missing_day_gives_nan_not_zero(self, tmp_path):
+        """ไม่มีไฟล์เลยในช่วงของ bin — ต้องได้ NaN ทั้ง 4 คอลัมน์ ไม่ใช่ 0"""
+        store = XrayFluxStore(tmp_path)
+
+        df = store.bin_series(datetime(2014, 10, 18), datetime(2014, 10, 18), cadence_hours=24)
+
+        row = df.iloc[0]
+        assert np.isnan(row["xray_median"])
+        assert np.isnan(row["xray_max"])
+        assert np.isnan(row["xray_min"])
+        assert np.isnan(row["xray_log10_median"])
+
+    def test_partially_missing_range_marks_only_the_empty_bins(self, tmp_path):
+        """bin ที่มีข้อมูลจริงต้องได้ค่าจริง bin ที่ไม่มีข้อมูลต้องได้ NaN — ไม่ปนกัน
+
+        เขียนข้อมูลไว้เฉพาะวันที่ 18 (00:00-23:59) แล้วขอ bin ของวันที่ 19 (หน้าต่าง
+        (18, 19] — มีข้อมูลเกือบทั้งวัน) กับวันที่ 20 (หน้าต่าง (19, 20] — ไม่มีข้อมูลเลย
+        เพราะห่างจากวันที่ 18 ไปสองวันเต็ม) เพื่อเลี่ยงจุดที่ตกขอบ bin พอดี (นาทีแรกของ
+        วันที่ 18 คือ 00:00:00 ซึ่งเป็นขอบบนของ bin วันที่ 18 เอง ไม่ใช่ขอบล่างของ
+        bin วันที่ 19 — ดู test_hand_computed_window_matches)
+        """
+        _write_day(tmp_path, datetime(2014, 10, 18), [4e-6] * 1440, [0] * 1440)
+        store = XrayFluxStore(tmp_path)
+
+        df = store.bin_series(datetime(2014, 10, 19), datetime(2014, 10, 20), cadence_hours=24)
+
+        assert df.iloc[0]["xray_median"] == pytest.approx(4e-6, rel=1e-6)
+        assert np.isnan(df.iloc[1]["xray_median"])
+
+    def test_same_value_for_every_harp_at_the_same_time(self, tmp_path):
+        """คุณสมบัติที่ตั้งใจให้เป็น: X-ray เป็นค่าทั้งดวง ไม่ใช่รายดวง — เรียก bin_series
+        ซ้ำสองครั้งด้วยช่วงเวลาเดียวกัน (แทนการขอค่าจาก HARP คนละดวง) ต้องได้ค่าเดียวกันเป๊ะ
+        เพราะเป็นฟังก์ชันบริสุทธิ์ของเวลา ไม่รับ HARPNUM เป็น input เลย"""
+        _write_day(tmp_path, datetime(2014, 10, 18), [1e-6, 5e-6, 3e-6], [0, 0, 0])
+        store = XrayFluxStore(tmp_path)
+
+        df_for_harp_a = store.bin_series(datetime(2014, 10, 18), datetime(2014, 10, 18), cadence_hours=24)
+        df_for_harp_b = store.bin_series(datetime(2014, 10, 18), datetime(2014, 10, 18), cadence_hours=24)
+
+        pd.testing.assert_frame_equal(df_for_harp_a, df_for_harp_b)
 
 
 class TestDecimation:
