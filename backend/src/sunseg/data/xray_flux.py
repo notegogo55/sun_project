@@ -5,13 +5,30 @@
 ไม่ใช่ฟลักซ์จริงที่ขึ้น-ลงต่อเนื่องแบบที่ SWPC แสดงบนเว็บ — โมดูลนี้อ่านฟลักซ์จริง
 รายนาทีจากไฟล์ที่ ``scripts/download_xray.py`` ดาวน์โหลดไว้ล่วงหน้า
 
-**เฉพาะ GOES-15 ช่วง 2011-2017** ซึ่งครอบคลุม ``time_range`` ของโปรเจคพอดี (ตรวจสอบ
-ไดเรกทอรีของ NOAA แล้ว: GOES-15 มีข้อมูลต่อเนื่องครบทุกปีในช่วงนี้ ส่วน GOES-13/14 ขาด
-บางปี) ออกแบบให้เพิ่มดาวเทียมอื่นได้ทีหลังผ่าน ``SOURCE_SATELLITES`` โดยไม่ต้องแก้
-โครงสร้าง แต่ตอนนี้ยังไม่มีความจำเป็นเพราะดวงเดียวก็พอแล้ว
+**GOES-15 (2011-2017) + GOES-16 (หน้าต่าง case study พ.ค. 2024 เป็นต้นไป)** —
+GOES-15/14 (คลัง legacy "GOES 1-15" ของ NCEI) หยุดมีข้อมูลหลัง 2020-03-04 ส่วน
+GOES-16 (คลัง "GOES-R series" คนละ URL root กันโดยสิ้นเชิง — ดู
+``scripts/download_xray.py``) เป็นดาวเทียมที่ยังทำงานอยู่ช่วง พ.ค. 2024 (พายุ Gannon)
+ออกแบบให้เพิ่มดาวเทียมอื่นได้ทีหลังผ่าน ``SOURCE_SATELLITES`` โดยไม่ต้องแก้โครงสร้าง
 
 รูปแบบไฟล์ (NOAA NCEI ``xrsf-l2-avg1m_science``) เป็น NetCDF4 ซึ่งจริง ๆ คือ HDF5
-จึงอ่านด้วย ``h5py`` ได้ตรง ๆ โดยไม่ต้องติดตั้งแพคเกจ ``netCDF4``/``xarray`` เพิ่ม
+จึงอ่านด้วย ``h5py`` ได้ตรง ๆ โดยไม่ต้องติดตั้งแพคเกจ ``netCDF4``/``xarray`` เพิ่ม —
+ทั้ง GOES 1-15 และ GOES-R series ใช้ตัวแปรชื่อเดียวกัน (``time``, ``xrsb_flux``,
+``xrsb_flag``) และความหมายของ flag เหมือนกัน (0 = good_data) จึงอ่านด้วยฟังก์ชัน
+เดียวกันได้ทั้งคู่ ต่างกันแค่ตัวคูณสเกล (ดู ``SATELLITE_SCALE``)
+
+**เรื่องสเกล**: GOES 1-15 กับ GOES-R series คาลิเบรตกันคนละวิธี — เอกสารของ NOAA
+ระบุว่าข้อมูล "science quality" ของทั้งสองรุ่นควรอยู่ในหน่วยฟิสิกส์จริงแล้วทั้งคู่
+(https://www.ncei.noaa.gov/products/goes-1-15/space-weather-instruments) แต่ตรวจสอบ
+ด้วยข้อมูลจริงในช่วงที่ทั้งสองดวงทำงานทับกัน (GOES-15 กับ GOES-16 ทับกัน 2017 ถึง
+2020-03-04) แล้วพบว่า **ไม่ตรงกันเป๊ะ**: g16/g15 median = 1.0805 (n=29,620 จุด
+ที่มีข้อมูลดีทั้งคู่ ช่วง 2017-08-15..2017-09-15) ตรวจซ้ำเฉพาะจุดระดับ M-class+
+(flux > 1e-5) ได้ 1.0781 (n=1,910) และที่ peak ของ flare X9.3 วันที่ 6 ก.ย. 2017
+(เหตุการณ์จริงที่มีชื่อ ตรวจสอบย้อนกลับได้) ได้ 1.0949 — ทั้งสามวิธีวัดสอดคล้องกัน
+ในช่วง 1.08-1.09 จึงใช้ **1.0805 (median ทั้งช่วง)** เป็นตัวคูณสเกล ปรับ GOES-16
+ให้อยู่บนสเกลเดียวกับ GOES-15 (ตัวอ้างอิง เพราะเป็นดาวเทียมของชุดข้อมูลเทรนหลัก)
+สคริปต์ที่ใช้วัด (ดาวน์โหลด + คำนวณอัตราส่วน) ไม่ได้ commit ไว้ในนี้ — วิธีวัดซ้ำได้
+คือดาวน์โหลดช่วงทับซ้อนของทั้งสองดวงแล้วเทียบ flux ที่ timestamp เดียวกัน
 """
 
 from __future__ import annotations
@@ -26,8 +43,18 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-#: ดาวเทียมที่อ่าน เรียงตามลำดับความน่าเชื่อถือ (ตอนนี้มีดวงเดียว — ดู docstring บน)
-SOURCE_SATELLITES: tuple[str, ...] = ("g15",)
+#: ดาวเทียมที่อ่าน เรียงตามลำดับความน่าเชื่อถือ/priority — ในทางปฏิบัติช่วงเวลาที่
+#: แต่ละดวงมีไฟล์ไม่ทับกัน (g15 หยุดข้อมูล 2020-03-04, g16 ใช้ตั้งแต่ case study
+#: พ.ค. 2024) จึงไม่มีวันไหนที่ต้องเลือกระหว่างสองดวงจริง ๆ แต่คงลำดับนี้ไว้เผื่อ
+#: อนาคตมีไฟล์ซ้อนกัน
+SOURCE_SATELLITES: tuple[str, ...] = ("g15", "g16")
+
+#: ตัวคูณสเกลเทียบกับ g15 (ตัวอ้างอิง) — ดู "เรื่องสเกล" ใน docstring บนสำหรับที่มา
+#: ของตัวเลขและวิธีวัด ดาวเทียมที่ไม่อยู่ในนี้ถือว่าสเกล = 1.0 (ยังไม่ได้วัด)
+SATELLITE_SCALE: dict[str, float] = {
+    "g15": 1.0,
+    "g16": 1.0 / 1.0805,
+}
 
 #: NOAA อ้างเวลาเป็นวินาทีนับจากจุดนี้ (ระบุไว้ใน attribute ``units`` ของตัวแปร time)
 _EPOCH = datetime(2000, 1, 1, 12, 0, 0)
@@ -79,15 +106,19 @@ class XrayFluxStore:
 
     # ------------------------------------------------------------------ #
 
-    def _day_path(self, day: date) -> Path | None:
-        """หาไฟล์ของวันนั้น — ไม่ผูก version string ตายตัว เผื่อ NOAA reprocess ใหม่"""
+    def _day_path(self, day: date) -> tuple[Path, str] | None:
+        """หาไฟล์ของวันนั้น — ไม่ผูก version string ตายตัว เผื่อ NOAA reprocess ใหม่
+
+        คืนดาวเทียมที่เจอมาด้วย เพราะไฟล์ของแต่ละดวงต้องคูณตัวคูณสเกลคนละค่า
+        (ดู ``SATELLITE_SCALE``) — เดาจากชื่อไฟล์อย่างเดียวหลังเปิดไฟล์แล้วจะไม่รู้
+        """
         year_dir = self.root / str(day.year)
         if not year_dir.is_dir():
             return None
         for sat in SOURCE_SATELLITES:
             matches = sorted(year_dir.glob(f"sci_xrsf-l2-avg1m_{sat}_d{day:%Y%m%d}_v*.nc"))
             if matches:
-                return matches[-1]  # ถ้ามีหลาย version เอาตัวล่าสุด (เรียงชื่อ = เรียง version)
+                return matches[-1], sat  # หลาย version เอาตัวล่าสุด (เรียงชื่อ = เรียง version)
         return None
 
     def series(self, start: datetime, end: datetime) -> XraySeries:
@@ -101,9 +132,10 @@ class XrayFluxStore:
 
         day = start.date()
         while day <= end.date():
-            path = self._day_path(day)
-            if path is not None:
-                day_times, day_flux = _read_day(path)
+            found = self._day_path(day)
+            if found is not None:
+                path, satellite = found
+                day_times, day_flux = _read_day(path, satellite)
                 times.append(day_times)
                 flux.append(day_flux)
             day += timedelta(days=1)
@@ -138,9 +170,14 @@ class XrayFluxStore:
 # --------------------------------------------------------------------------- #
 
 
-def _read_day(path: Path) -> tuple[np.ndarray, np.ndarray]:
+def _read_day(path: Path, satellite: str) -> tuple[np.ndarray, np.ndarray]:
     """หนึ่งไฟล์ -> (เวลา, ฟลักซ์ช่องยาว) จุดที่คุณภาพไม่ดีถูกแทนด้วย NaN ไม่ใช่ตัดทิ้ง
-    เพื่อให้กริดเวลายังต่อเนื่อง (ช่องว่างในกราฟ ไม่ใช่เวลาที่หายไปเงียบ ๆ)"""
+    เพื่อให้กริดเวลายังต่อเนื่อง (ช่องว่างในกราฟ ไม่ใช่เวลาที่หายไปเงียบ ๆ)
+
+    ``satellite`` กำหนดตัวคูณสเกล (``SATELLITE_SCALE``) — GOES 1-15 กับ GOES-R series
+    ใช้ตัวแปรชื่อเดียวกันและความหมาย flag เดียวกัน จึงอ่านโครงสร้างไฟล์แบบเดียวกันได้
+    ต่างกันแค่ต้องคูณค่าที่อ่านมาด้วยตัวคูณของดวงนั้นก่อนคืนออกไป
+    """
     import h5py
 
     with h5py.File(path, "r") as handle:
@@ -149,10 +186,11 @@ def _read_day(path: Path) -> tuple[np.ndarray, np.ndarray]:
         flag = handle["xrsb_flag"][:]
 
     times = np.array(_EPOCH, dtype="datetime64[s]") + seconds.astype("timedelta64[s]")
-    # flag == 0 คือ "good_data" ล้วน ๆ — บิตอื่นทุกตัว (bad/eclipsed/temperature_recovery)
-    # ถือว่าอ่านค่าไม่ได้ ปลอดภัยกว่าเดา
+    # flag == 0 คือ "good_data" ล้วน ๆ — บิตอื่นทุกตัว (bad/eclipsed/temperature_recovery
+    # ใน GOES 1-15, หรือ eclipse/bad_data/interpolated ใน GOES-R — คำต่างกันแต่ 0 แปลว่า
+    # "ดี" เหมือนกันทั้งคู่) ถือว่าอ่านค่าไม่ได้ ปลอดภัยกว่าเดา
     bad = (flag != 0) | ~np.isfinite(flux) | (flux <= 0) | (flux <= -9998.0)
-    flux = np.where(bad, np.nan, flux)
+    flux = np.where(bad, np.nan, flux) * SATELLITE_SCALE.get(satellite, 1.0)
     return times, flux
 
 

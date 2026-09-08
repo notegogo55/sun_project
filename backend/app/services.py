@@ -95,7 +95,7 @@ class AppServices:
             # ไม่ใช่ผลจากสคริปต์ในโปรเจคนี้ — เป็นคลังภายนอกที่ชี้ด้วย SUNSEG_PROTON_DIR
             ("ฟลักซ์โปรตอน (GOES particle)", self.proton.available, "ตั้ง SUNSEG_PROTON_DIR ใน .env"),
             (
-                "ฟลักซ์ X-ray ต่อเนื่อง (GOES-15)",
+                "ฟลักซ์ X-ray ต่อเนื่อง (GOES-15/16)",
                 self.xray.available,
                 "รัน backend/scripts/download_xray.py",
             ),

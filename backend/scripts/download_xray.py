@@ -1,16 +1,26 @@
-"""ดาวน์โหลดฟลักซ์ GOES XRS ต่อเนื่องราย 1 นาที (GOES-15, ช่อง 1-8 Å) จาก NOAA NCEI
+"""ดาวน์โหลดฟลักซ์ GOES XRS ต่อเนื่องราย 1 นาที (ช่อง 1-8 Å) จาก NOAA NCEI
 
 รายการ flare ที่ download_metadata.py ดึงมามีแค่ 3 จุดต่อเหตุการณ์ (เริ่ม/peak/จบ)
 พอสำหรับ label ของโมเดล แต่วาดกราฟจากสามจุดนั้นได้เส้นเป็นหนามแหลม ๆ ไม่ใช่ฟลักซ์จริง
 ที่ขึ้นลงต่อเนื่องแบบที่หน้า SWPC แสดง สคริปต์นี้ดึงฟลักซ์จริงรายนาทีมาแทน
 
+**สองคลังคนละ URL root กันโดยสิ้นเชิง** เพราะ NOAA แยกโฮสต์ข้อมูล GOES 1-15 (legacy,
+เครื่องมือ XRS) กับ GOES-R series (16 ขึ้นไป, เครื่องมือ EXIS) — แม้ชื่อไฟล์และ
+โครงสร้างข้อมูลภายในจะเหมือนกันทุกประการ (ดู ``sunseg.data.xray_flux``):
+
+- GOES 1-15 (``g08``..``g15``): ``www.ncei.noaa.gov/.../goes-space-environment-monitor/``
+- GOES-R series (``g16``..``g19``): ``data.ngdc.noaa.gov/platforms/.../goesNN/l2/data/``
+
 ตัวอย่างการใช้งาน::
 
     # ทดสอบด้วยเดือนเดียวก่อน (แนะนำให้ทำครั้งแรกเสมอ — ไฟล์เต็มช่วงมีเกือบ 2,600 ไฟล์)
-    python backend/scripts/download_xray.py --start 2014-10-01 --end 2014-10-31
+    python backend/scripts/download_xray.py --satellite g15 --start 2014-10-01 --end 2014-10-31
 
-    # ดึงเต็มช่วงตาม time_range ใน configs/data.yaml (2011-2017 ~150 MB, ใช้เวลานาน)
-    python backend/scripts/download_xray.py
+    # ดึงเต็มช่วงตาม time_range ใน configs/data.yaml (g15, 2011-2017 ~150 MB, ใช้เวลานาน)
+    python backend/scripts/download_xray.py --satellite g15
+
+    # หน้าต่าง case study พ.ค. 2024 — g15 ไม่มีข้อมูลแล้ว ต้องใช้ g16
+    python backend/scripts/download_xray.py --satellite g16 --start 2024-05-01 --end 2024-05-31
 
 รันซ้ำได้ปลอดภัย — ไฟล์ที่มีอยู่แล้วจะถูกข้าม (เว้นแต่ใส่ --overwrite)
 """
@@ -35,11 +45,14 @@ from sunseg.logging_utils import setup_logging  # noqa: E402
 
 logger = logging.getLogger("download_xray")
 
-NCEI_ROOT = "https://www.ncei.noaa.gov/data/goes-space-environment-monitor/access/science/xrs"
+_LEGACY_ROOT = "https://www.ncei.noaa.gov/data/goes-space-environment-monitor/access/science/xrs"
+_GOESR_ROOT = "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes"
 _PRODUCT = "xrsf-l2-avg1m_science"
 
-# ดวงเดียวที่ใช้จริงตอนนี้คือ g15 (ดู SOURCE_SATELLITES ใน xray_flux.py) — regex
-# ครอบคลุมทุกดวงไว้เพื่อให้ขยายทีหลังได้โดยไม่ต้องแก้ตรงนี้
+#: ดาวเทียมรุ่น GOES 1-15 (เครื่องมือ XRS) — ใช้คลัง legacy ที่ www.ncei.noaa.gov
+_LEGACY_SATELLITES = {"g08", "g09", "g10", "g11", "g12", "g13", "g14", "g15"}
+
+# ครอบคลุมทั้งสองรุ่นไว้ในตัวเดียว เพราะชื่อไฟล์เหมือนกันทุกประการข้ามรุ่น
 _FILE_RE = re.compile(r'href="(sci_xrsf-l2-avg1m_g\d+_d(\d{8})_v[\d.\-]+\.nc)"')
 
 
@@ -47,6 +60,13 @@ def _satellite_dir(satellite: str) -> str:
     """ชื่อไดเรกทอรีของ NOAA ("g15" -> "goes15") — ต่างจากชื่อในไฟล์ตรงๆ ("g15")
     ต้องแยกสองชื่อนี้ให้ชัด ผสมกันแล้ว URL จะ 404 แบบเงียบๆ (เจอมาแล้วตอนพัฒนา)"""
     return "goes" + satellite.removeprefix("g")
+
+
+def _month_index_url(satellite: str, year: int, month: int) -> str:
+    """URL ของหน้า listing ไฟล์ในเดือนนั้น — โครงสร้างต่างกันตามรุ่นดาวเทียม (ดู docstring บน)"""
+    if satellite in _LEGACY_SATELLITES:
+        return f"{_LEGACY_ROOT}/{_satellite_dir(satellite)}/{_PRODUCT}/{year}/{month:02d}/"
+    return f"{_GOESR_ROOT}/{_satellite_dir(satellite)}/l2/data/{_PRODUCT}/{year}/{month:02d}/"
 
 
 def _fetch(url: str, timeout: int = 60) -> bytes:
@@ -58,7 +78,7 @@ def _fetch(url: str, timeout: int = 60) -> bytes:
 def _list_month(satellite: str, year: int, month: int) -> list[str]:
     """ชื่อไฟล์ทั้งหมดที่ NOAA มีจริงในเดือนนั้น — คืน [] เงียบๆ ถ้ายังไม่มีข้อมูล
     (เดือนปัจจุบันที่ยังไม่ reprocess) หรือเน็ตหลุดชั่วคราว ให้ผู้เรียกตัดสินใจเอง"""
-    url = f"{NCEI_ROOT}/{_satellite_dir(satellite)}/{_PRODUCT}/{year}/{month:02d}/"
+    url = _month_index_url(satellite, year, month)
     try:
         html = _fetch(url).decode("utf-8", "replace")
     except (urllib.error.URLError, TimeoutError, OSError):
@@ -84,7 +104,7 @@ def _download_one(
     out = dest_root / str(year) / filename
     if out.exists() and not overwrite:
         return str(out), "skip"
-    url = f"{NCEI_ROOT}/{_satellite_dir(satellite)}/{_PRODUCT}/{year}/{month:02d}/{filename}"
+    url = _month_index_url(satellite, year, month) + filename
     try:
         data = _fetch(url, timeout=120)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -149,6 +169,12 @@ def main() -> int:
     config = load_data_config()
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--satellite",
+        choices=sorted(SOURCE_SATELLITES),
+        default=SOURCE_SATELLITES[0],
+        help=f"ดาวเทียมที่จะดาวน์โหลด (ค่าเริ่มต้น {SOURCE_SATELLITES[0]})",
+    )
     parser.add_argument("--start", type=date.fromisoformat, default=config.time_range.start)
     parser.add_argument("--end", type=date.fromisoformat, default=config.time_range.end)
     parser.add_argument("--workers", type=int, default=8)
@@ -157,9 +183,16 @@ def main() -> int:
 
     dest_root = config.paths.raw / "xrs"
     logger.info("=" * 62)
-    logger.info("ดาวน์โหลดฟลักซ์ GOES XRS ต่อเนื่อง -> %s", dest_root)
+    logger.info("ดาวน์โหลดฟลักซ์ GOES XRS ต่อเนื่อง (%s) -> %s", args.satellite, dest_root)
     logger.info("=" * 62)
-    download(args.start, args.end, dest_root, workers=args.workers, overwrite=args.overwrite)
+    download(
+        args.start,
+        args.end,
+        dest_root,
+        satellite=args.satellite,
+        workers=args.workers,
+        overwrite=args.overwrite,
+    )
     return 0
 
 

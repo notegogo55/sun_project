@@ -1,4 +1,4 @@
-"""API สำหรับฟลักซ์ X-ray ต่อเนื่องรายนาที (GOES-15)"""
+"""API สำหรับฟลักซ์ X-ray ต่อเนื่องรายนาที (GOES-15 ช่วง 2011-2017, GOES-16 ช่วง case study พ.ค. 2024)"""
 
 from __future__ import annotations
 

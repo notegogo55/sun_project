@@ -13,13 +13,19 @@ import h5py
 import numpy as np
 import pytest
 
-from sunseg.data.xray_flux import XrayFluxStore, _decimate_keep_peaks
+from sunseg.data.xray_flux import SATELLITE_SCALE, XrayFluxStore, _decimate_keep_peaks, _read_day
 
 _EPOCH = datetime(2000, 1, 1, 12, 0, 0)
 
 
-def _write_day(root, day: datetime, flux: list[float], flag: list[int]) -> None:
-    """เขียนไฟล์รายวันจำลอง 1 ไฟล์ในรูปแบบเดียวกับ ``sci_xrsf-l2-avg1m_g15_dYYYYMMDD_v*.nc``"""
+def _write_day(
+    root, day: datetime, flux: list[float], flag: list[int], satellite: str = "g15"
+) -> None:
+    """เขียนไฟล์รายวันจำลอง 1 ไฟล์ในรูปแบบเดียวกับ ``sci_xrsf-l2-avg1m_{sat}_dYYYYMMDD_v*.nc``
+
+    GOES 1-15 กับ GOES-R series ใช้ตัวแปรชื่อเดียวกันทุกประการ (ดู docstring ของ
+    ``sunseg.data.xray_flux``) ไฟล์จำลองนี้จึงใช้แทนได้ทั้งสองรุ่น ต่างกันแค่ชื่อไฟล์
+    """
     n = len(flux)
     assert len(flag) == n
     seconds = [
@@ -29,7 +35,7 @@ def _write_day(root, day: datetime, flux: list[float], flag: list[int]) -> None:
 
     year_dir = root / str(day.year)
     year_dir.mkdir(parents=True, exist_ok=True)
-    path = year_dir / f"sci_xrsf-l2-avg1m_g15_d{day:%Y%m%d}_v2-2-1.nc"
+    path = year_dir / f"sci_xrsf-l2-avg1m_{satellite}_d{day:%Y%m%d}_v2-2-1.nc"
     with h5py.File(path, "w") as handle:
         handle.create_dataset("time", data=np.array(seconds, dtype="float64"))
         handle.create_dataset("xrsb_flux", data=np.array(flux, dtype="float32"))
@@ -133,6 +139,67 @@ class TestSeries:
         series = store.series(datetime(2014, 10, 18), datetime(2014, 10, 18, 0, 1))
 
         assert series.flux == pytest.approx([9e-6], rel=1e-6)
+
+
+class TestMultiSatellite:
+    """g15 (2011-2017) กับ g16 (case study พ.ค. 2024 เป็นต้นไป) คาลิเบรตกันคนละวิธี —
+    ดู docstring ของ ``sunseg.data.xray_flux`` สำหรับที่มาของตัวเลข ``SATELLITE_SCALE``"""
+
+    def test_g16_flux_is_scaled_to_g15_reference(self, tmp_path):
+        """ค่าดิบในไฟล์ g16 ต้องถูกคูณด้วย SATELLITE_SCALE['g16'] ก่อนคืนออกไป"""
+        _write_day(tmp_path, datetime(2024, 5, 10), [1e-6, 2e-6], [0, 0], satellite="g16")
+        store = XrayFluxStore(tmp_path)
+
+        series = store.series(datetime(2024, 5, 10, 0, 0), datetime(2024, 5, 10, 0, 1))
+
+        scale = SATELLITE_SCALE["g16"]
+        assert series.flux == pytest.approx([1e-6 * scale, 2e-6 * scale], rel=1e-6)
+
+    def test_g15_flux_is_not_scaled(self, tmp_path):
+        """g15 คือดาวเทียมอ้างอิง (scale = 1.0) — ต้องได้ค่าดิบกลับมาตรงๆ"""
+        _write_day(tmp_path, datetime(2014, 10, 18), [1e-6], [0], satellite="g15")
+        store = XrayFluxStore(tmp_path)
+
+        series = store.series(datetime(2014, 10, 18, 0, 0), datetime(2014, 10, 18, 0, 0))
+
+        assert series.flux == pytest.approx([1e-6], rel=1e-6)
+
+    def test_spans_the_transition_between_satellites(self, tmp_path):
+        """ช่วงเวลาที่คาบเกี่ยวสองดวง (g15 หมดข้อมูล, g16 เริ่ม) ต้องต่อกันได้ไร้รอยต่อ
+        โดยแต่ละฝั่งถูกปรับสเกลตามดวงของตัวเอง ไม่ใช่ตามดวงเดียวทั้งเส้น"""
+        _write_day(tmp_path, datetime(2020, 3, 4), [1e-6] * 3, [0] * 3, satellite="g15")
+        _write_day(tmp_path, datetime(2024, 5, 1), [1e-6] * 3, [0] * 3, satellite="g16")
+        store = XrayFluxStore(tmp_path)
+
+        series = store.series(datetime(2020, 3, 4), datetime(2024, 5, 1, 0, 2))
+
+        scale = SATELLITE_SCALE["g16"]
+        assert series.flux[:3] == pytest.approx([1e-6] * 3, rel=1e-6)
+        assert series.flux[-3:] == pytest.approx([1e-6 * scale] * 3, rel=1e-6)
+
+    def test_g16_flag_semantics_match_g15(self, tmp_path):
+        """g16 ใช้คำอธิบาย flag ต่างจาก g15 (eclipse/bad_data/interpolated แทน
+        bad_data/eclipsed_by_earth/temperature_recovery) แต่ 0 = ดี เหมือนกันทั้งคู่ —
+        flag ที่ไม่ใช่ 0 ต้องกลายเป็น None เหมือนที่ g15 ทำ"""
+        _write_day(tmp_path, datetime(2024, 5, 10), [1e-6, 1e-6, 1e-6], [0, 1, 4], satellite="g16")
+        store = XrayFluxStore(tmp_path)
+
+        series = store.series(datetime(2024, 5, 10, 0, 0), datetime(2024, 5, 10, 0, 2))
+
+        assert series.flux[0] is not None
+        assert series.flux[1:] == [None, None]
+
+    def test_unknown_satellite_defaults_to_unscaled(self, tmp_path):
+        """ดาวเทียมที่ยังไม่ได้วัดตัวคูณสเกล (ไม่อยู่ใน SATELLITE_SCALE) ต้องไม่ถูกคูณ
+        อะไรเลย แทนที่จะพังหรือใส่ค่าเดามา — ทดสอบ ``_read_day`` ตรงๆ เพราะ SOURCE_SATELLITES
+        ปัจจุบันมีแค่ g15/g16 ซึ่งทั้งคู่มีตัวคูณสเกลอยู่แล้ว จึงจำลองผ่าน XrayFluxStore
+        (public API) ไม่ได้ — เผื่ออนาคตเพิ่มดาวเทียมใหม่ใน SOURCE_SATELLITES ก่อนวัดสเกล"""
+        _write_day(tmp_path, datetime(2015, 1, 1), [1e-6], [0], satellite="g14")
+        path = tmp_path / "2015" / "sci_xrsf-l2-avg1m_g14_d20150101_v2-2-1.nc"
+
+        _times, flux = _read_day(path, satellite="g14")
+
+        assert flux == pytest.approx([1e-6], rel=1e-6)
 
 
 class TestDecimation:
