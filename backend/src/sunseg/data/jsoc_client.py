@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
@@ -45,20 +46,38 @@ def iter_time_chunks(
         cursor = chunk_end
 
 
+_PENDING_ID_RE = re.compile(r"pending export requests?\s*\((\S+?)\)", re.IGNORECASE)
+
+
 def _is_pending_conflict(exc: BaseException) -> bool:
     """แยกแยะ error "มีคำขอ export ค้างอยู่" (status=7) ของ JSOC
 
     ต้องไล่ดูทั้งสาย ``__cause__`` เพราะ :meth:`JsocClient._with_retry` ห่อ
     exception ต้นทางไว้ใน ``RuntimeError`` ข้อความจริงจึงไม่อยู่ในตัวบนสุด
     """
+    return _pending_conflict_id(exc) is not None or any(
+        "pending export request" in str(cur).lower() for cur in _exc_chain(exc)
+    )
+
+
+def _exc_chain(exc: BaseException) -> list[BaseException]:
     seen: set[int] = set()
+    chain: list[BaseException] = []
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
-        if "pending export request" in str(current).lower():
-            return True
+        chain.append(current)
         seen.add(id(current))
         current = current.__cause__ or current.__context__
-    return False
+    return chain
+
+
+def _pending_conflict_id(exc: BaseException) -> str | None:
+    """ดึง request ID ของคำขอที่ค้าง (เช่น ``JSOC_20260908_003076``) จากข้อความ error"""
+    for cur in _exc_chain(exc):
+        match = _PENDING_ID_RE.search(str(cur))
+        if match:
+            return match.group(1)
+    return None
 
 
 class JsocClient:
@@ -113,49 +132,119 @@ class JsocClient:
             f"{description} ล้มเหลวหลังพยายาม {self.max_retries} ครั้ง"
         ) from last_exc
 
-    def _submit_export(
+    def _retry_on_pending(
         self,
-        query: str,
-        method: str,
-        protocol: str,
-        wait_s: float = 60.0,
-        max_waits: int = 6,
+        description: str,
+        fn,
+        wait_s: float = 90.0,
+        max_waits: int = 10,
+        own_id: str | None = None,
     ):
-        """สั่ง export โดยรอให้คิวของผู้ใช้ว่างก่อนถ้าจำเป็น
+        """เรียก ``fn`` (ไม่รับพารามิเตอร์ — ผูกด้วย lambda/closure) ซ้ำถ้า JSOC ตอบ
+        "pending export request" (``status=7``)
 
         JSOC อนุญาตให้มีคำขอ export ค้างได้ **คำขอเดียวต่อผู้ใช้** ถ้าการเชื่อมต่อ
         หลุดระหว่างรอคำขอก่อนหน้า (เน็ตสะดุด, WinError 10060) คำขอนั้นยังค้างอยู่
         ฝั่ง JSOC ส่วนฝั่งเราทิ้งไปแล้ว ผลคือคำขอถัดไป *ทุกอัน* ถูกปฏิเสธทันที
         ด้วย ``status=7`` และเฟรมที่เหลือทั้งหมดจะล้มเหลวรวดเดียวในไม่กี่วินาที
         (เคยเกิดจริง: 5 เฟรมตายใน 90 วินาที) การรอให้คำขอค้างนั้นเสร็จเองแล้วค่อย
-        ส่งใหม่จึงถูกกว่าการปล่อยให้ล้มทั้งชุด
+        ลองใหม่จึงถูกกว่าการปล่อยให้ล้มทั้งชุด — ใช้ backoff ยาวกว่า
+        :meth:`_with_retry` มาก (นาทีแทนวินาที) เพราะต้องรอให้คำขอเดิมเสร็จเองจริง ๆ
+        ไม่ใช่แค่เน็ตสะดุดชั่วคราว ต้องครอบทั้งขั้นส่ง (``client.export``) และขั้นรอ
+        สถานะ (``request.wait``) เพราะ pending conflict โผล่ได้ทั้งสองจุด
 
         .. note::
-           ข้อความ error บอก request ID ของคำขอที่ค้างมาด้วย และ ``drms`` มี
-           ``export_from_id()`` ให้เกาะคำขอเดิมได้ — **ห้ามใช้ที่นี่** เพราะคำขอนั้น
-           เป็นของ *เฟรมก่อนหน้า* คนละ record กับที่กำลังขอ ถ้าเกาะไปจะได้ FITS
-           ของเวลาอื่นมาเงียบ ๆ แล้วถูกบันทึกภายใต้ tag ของเฟรมนี้
+           ข้อความ error บอก request ID ของคำขอที่ค้างมาด้วย เคยลองรอเฉย ๆ
+           (sleep แล้วลองใหม่) แล้วไม่พอ — วัดจากของจริง: คำขอค้างใช้เวลาประมวลผล
+           เสร็จฝั่ง JSOC เร็วมาก (แค่ยังไม่มีใคร poll ไปรับทราบ) แต่ตราบใดที่ไม่มี
+           ใคร poll มันค้างอยู่ในสถานะ "pending" ของผู้ใช้ตลอดไปและบล็อกคำขอถัดไป
+           *ทุกอัน* ทันที — และคำขอถัดไปเองก็จะกลายเป็นคำขอค้างตัวใหม่อีกถ้าเราไม่รอ
+           มันจนจบ (self-perpetuating) จึงต้อง**เกาะ id ที่ error บอกมาด้วย
+           ``export_from_id()`` แล้ว ``.wait()`` เพื่อ poll สถานะให้จบ**ก่อนลองใหม่
+           — ใช้แค่ poll สถานะเฉย ๆ (ไม่ดาวน์โหลด/ไม่แตะไฟล์ของมัน) จึงปลอดภัย
+           แม้ id นั้นจะเป็นของคำขออื่น (เฟรมก่อนหน้า/คนละ record) เพราะเราไม่เคยเอา
+           ข้อมูลของมันมาใช้ที่นี่เลย
+
+        .. important::
+           พบจริงว่าตอนเรียก ``request.wait()`` (ไม่ใช่ตอน ``client.export()``)
+           แล้วเจอ pending conflict ที่ id **ตรงกับ id ของ ``request`` ตัวเองเป๊ะ ๆ**
+           — object เดิมที่ ``.wait()`` ค้างอยู่บางทีไม่เห็นว่าตัวเองเสร็จแล้ว (เป็น
+           race/cache bug ฝั่ง ``drms``/JSOC) เรียก ``.wait()`` ซ้ำบน object เดิมกี่
+           ครั้งก็ยังฟ้องอ้างถึงตัวเองไม่เลิก ทั้งที่ ``export_from_id()`` แบบสด ๆ
+           ยืนยัน status=0 (เสร็จจริง) ไปแล้ว ผู้เรียกที่รู้ id ของตัวเองอยู่แล้ว
+           (เช่น ``export_segments``) จึงควรส่ง ``own_id`` มาด้วย — ถ้า drain แล้วเจอ
+           id ตรงกับ ``own_id`` และ status=0 จะถือว่าสำเร็จทันที ไม่ไปเรียก ``fn()``
+           ซ้ำบน object เดิมอีก
         """
         for attempt in range(1, max_waits + 1):
             try:
-                return self._with_retry(
-                    f"export {query}",
-                    self.client.export,
-                    query,
-                    method=method,
-                    protocol=protocol,
-                    email=self.email,
-                )
+                return fn()
             except Exception as exc:  # noqa: BLE001 — drms โยน exception ได้หลากหลายชนิด
                 if not _is_pending_conflict(exc) or attempt == max_waits:
                     raise
-                logger.warning(
-                    "JSOC ยังมีคำขอ export ค้างอยู่ — รอ %.0f วินาทีแล้วลองใหม่ (%d/%d)",
-                    wait_s,
-                    attempt,
-                    max_waits,
-                )
-                time.sleep(wait_s)
+                blocking_id = _pending_conflict_id(exc)
+                if blocking_id:
+                    logger.warning(
+                        "%s: JSOC มีคำขอค้างอยู่ (%s) — เกาะ poll สถานะให้จบก่อนลองใหม่ (%d/%d)",
+                        description,
+                        blocking_id,
+                        attempt,
+                        max_waits,
+                    )
+                    drained = self._drain_pending(blocking_id, timeout_s=wait_s)
+                    if blocking_id == own_id and getattr(drained, "status", None) == 0:
+                        return None
+                else:
+                    logger.warning(
+                        "%s: JSOC ยังมีคำขอ export ค้างอยู่ (ไม่มี id ในข้อความ error) — "
+                        "รอ %.0f วินาทีแล้วลองใหม่ (%d/%d)",
+                        description,
+                        wait_s,
+                        attempt,
+                        max_waits,
+                    )
+                    time.sleep(wait_s)
+
+    def _drain_pending(self, request_id: str, timeout_s: float):
+        """poll สถานะของคำขอ export ที่ค้างจน ``.wait()`` จบ (สำเร็จหรือ error ก็ตาม)
+        เพื่อให้ JSOC ปลดล็อกคิวของผู้ใช้ แล้วคืน request object ที่เพิ่ง poll สด ๆ นี้
+        (``None`` ถ้า poll ไม่สำเร็จเลย) — ปกติใช้แค่เช็ค ``.status`` เพื่อปลดล็อก
+        เท่านั้น ไม่ดาวน์โหลดไฟล์ของมัน **ยกเว้น** ผู้เรียกยืนยันแล้วว่า id ตรงกับ
+        คำขอของตัวเอง (ดู note ใน :meth:`_retry_on_pending`) ซึ่งตอนนั้นการใช้ object
+        นี้แทนตัวเดิมที่ค้างอยู่ก็ปลอดภัย เพราะมันคือคำขอเดียวกัน แค่ instance ใหม่ที่
+        เห็นสถานะล่าสุดถูกต้อง
+        """
+        try:
+            request = self.client.export_from_id(request_id)
+            if hasattr(request, "wait"):
+                request.wait(timeout=timeout_s)
+            return request
+        except Exception as exc:  # noqa: BLE001 — แค่พยายาม poll ให้จบ ไม่ใช่ critical path
+            logger.debug("เกาะ poll คำขอค้าง %s ไม่สำเร็จ (จะลองใหม่รอบถัดไป): %s", request_id, exc)
+            return None
+
+    def _submit_export(
+        self,
+        query: str,
+        method: str,
+        protocol: str,
+        wait_s: float = 90.0,
+        max_waits: int = 10,
+    ):
+        """สั่ง export โดยรอให้คิวของผู้ใช้ว่างก่อนถ้าจำเป็น (ดู :meth:`_retry_on_pending`)"""
+        return self._retry_on_pending(
+            f"export {query}",
+            lambda: self._with_retry(
+                f"export {query}",
+                self.client.export,
+                query,
+                method=method,
+                protocol=protocol,
+                email=self.email,
+            ),
+            wait_s=wait_s,
+            max_waits=max_waits,
+        )
 
     # ------------------------------------------------------------------ #
     # keyword queries
@@ -297,10 +386,43 @@ class JsocClient:
         logger.info("กำลังขอ export: %s", query)
         request = self._submit_export(query, method, protocol)
 
-        # การรอสถานะก็ต้อง retry ด้วย: ถ้าเน็ตสะดุดตอน poll แล้วเราปล่อยเฟรมนี้ทิ้ง
-        # คำขอจะยังค้างอยู่ฝั่ง JSOC และไปบล็อกทุกเฟรมถัดไป (ดู _submit_export)
+        # การรอสถานะก็ต้อง retry แบบเดียวกับตอนส่ง (ทั้ง network hiccup และ pending
+        # conflict — ข้อความ "pending export request" โผล่ตอน wait() ได้เหมือนกัน
+        # ไม่ใช่แค่ตอน export()) ถ้าไม่ retry ให้ครบ คำขอจะยังค้างอยู่ฝั่ง JSOC และไป
+        # บล็อกทุกเฟรมถัดไป — แต่ต่างจาก _submit_export ตรงที่พบว่า object ``request``
+        # ตัวนี้เอง บางทีเรียก ``.wait()`` ซ้ำกี่ครั้งก็ยังฟ้อง pending conflict อ้างถึง
+        # id ของตัวเองไม่เลิก (race/cache bug ฝั่ง drms) ทั้งที่ export_from_id() แบบ
+        # สด ๆ ยืนยันว่า status=0 (เสร็จจริง) แล้ว จึงต้องเช็คเป็นพิเศษ: ถ้า drain
+        # แล้วเจอ id ตรงกับ request ของเราเองและ status=0 ให้เชื่อผลจาก drain แทน
+        # ไม่ไปเชื่อ ``request.status`` ที่อาจยังไม่อัปเดต (ดู _drain_pending)
+        own_id = getattr(request, "id", None)
         if hasattr(request, "wait"):
-            self._with_retry(f"wait {query}", request.wait, timeout=timeout_s)
+            max_waits = 10
+            for attempt in range(1, max_waits + 1):
+                try:
+                    self._with_retry(f"wait {query}", request.wait, timeout=timeout_s)
+                    break
+                except Exception as exc:  # noqa: BLE001 — drms โยน exception ได้หลากหลายชนิด
+                    if not _is_pending_conflict(exc) or attempt == max_waits:
+                        raise
+                    blocking_id = _pending_conflict_id(exc)
+                    logger.warning(
+                        "wait %s: JSOC มีคำขอค้างอยู่ (%s) — เกาะ poll สถานะให้จบก่อนลองใหม่ (%d/%d)",
+                        query,
+                        blocking_id or "?",
+                        attempt,
+                        max_waits,
+                    )
+                    if blocking_id:
+                        drained = self._drain_pending(blocking_id, timeout_s=90.0)
+                        if blocking_id == own_id and getattr(drained, "status", None) == 0:
+                            # object เดิมค้าง ใช้ instance ใหม่ที่เพิ่ง poll เห็นสถานะ
+                            # ถูกต้องแทน (คำขอเดียวกัน แค่คนละ instance — ดาวน์โหลดได้
+                            # ปกติ) ดู note ใน _retry_on_pending
+                            request = drained
+                            break
+                    else:
+                        time.sleep(90.0)
 
         if getattr(request, "status", 0) != 0:
             raise RuntimeError(
