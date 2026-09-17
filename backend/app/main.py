@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 
 from sunseg.logging_utils import setup_logging  # noqa: E402
 
-from .routers import forecast, goes, proton, segment, xray  # noqa: E402
+from .routers import forecast, goes, positions, proton, segment, xray  # noqa: E402
 from .schemas import HealthResponse, ModelInfoResponse  # noqa: E402
 from .services import AppServices  # noqa: E402
 
@@ -69,6 +69,7 @@ app.include_router(segment.router)
 app.include_router(goes.router)
 app.include_router(proton.router)
 app.include_router(xray.router)
+app.include_router(positions.router)
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["system"])
@@ -85,6 +86,7 @@ def health(request: Request):
         aia_images=services.aia.available,
         n_frames=len(services.segmentation.list_frames()),
         n_aia_frames=services.aia.n_frames,
+        flare_positions=services.flare_positions.available,
     )
 
 

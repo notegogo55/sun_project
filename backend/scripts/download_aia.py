@@ -12,9 +12,6 @@
     # 3) ดึงเต็มช่วง (~1.2 GB, ราว 45 นาทีด้วย 6 worker)
     python backend/scripts/download_aia.py
 
-    # 4) เฟรม case study ปี 2024 อยู่นอก time_range ต้องสั่งแยก
-    python backend/scripts/download_aia.py --case-study
-
 **ดึงเฉพาะเฟรมที่มีอยู่แล้ว** — สคริปต์นี้ไม่สร้างเฟรมใหม่ มันเดินตามรายการ
 ``data/processed/frames/images/*.npy`` ที่ ``download_images.py`` สร้างไว้ แล้วเติมภาพ
 AIA ของเวลาเดียวกันเข้าไป
@@ -36,6 +33,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from pathlib import Path
@@ -75,11 +73,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--channels",
         help="ระบุเฉพาะบางช่อง คั่นด้วยจุลภาค เช่น 171,304 (ค่าปริยาย: ทุกช่องใน config)",
-    )
-    p.add_argument(
-        "--case-study",
-        action="store_true",
-        help="ใช้หน้าต่าง case_study จาก config แทน time_range",
     )
     p.add_argument(
         "--wcs-only",
@@ -177,20 +170,41 @@ def process_frame(
 
             stamp, url = found
             offset_s = abs((stamp - moment_utc).total_seconds())
-            fits_path = download_fits(url, work_dir / Path(url).name)
+            # ชื่อไฟล์ชั่วคราวต้องผูกกับ (stem, channel) เอง ไม่ใช่แค่ชื่อจาก URL — สอง
+            # เฟรมที่ห่างกันแต่ URL ที่ใกล้ที่สุดชี้ไปไฟล์เดียวกันได้ (คลัง synoptic มี
+            # cadence ต่ำกว่าที่ frame ต้องการ) ถ้าใช้ชื่อจาก URL ตรงๆ เธรดที่รันพร้อมกัน
+            # (--workers > 1) จะแย่งเขียน/ลบไฟล์เดียวกัน
+            tmp_path = work_dir / f"{stem}_{channel.key}_{Path(url).name}"
 
-            try:
-                aia_map = read_synoptic(fits_path)
-                exptime = float(aia_map.meta.get("exptime", 0.0))
-                normalised = exposure_normalise(aia_map.data, exptime)
+            # ไฟล์ FITS ที่เพิ่งเขียนเสร็จบน Windows บางทีถูกโปรแกรมสแกนไฟล์ (เช่น
+            # antivirus) ล็อกไว้ชั่วครู่ก่อนอ่านได้ ทำให้เจอ WinError 32 "ใช้งานโดย
+            # โปรเซสอื่น" หรืออ่านได้ไฟล์ไม่ครบ (Errno 22) เป็นครั้งคราว — ปัญหาชั่วคราว
+            # ระดับ OS ไม่ใช่ข้อมูลเสีย จึง retry สั้นๆ พอให้ล็อกปล่อยแทนที่จะเสียทั้ง
+            # ช่องนั้นไปฟรีๆ (พบจริงจากการรันด้วย --workers 3 บน Windows)
+            last_exc: Exception | None = None
+            for attempt in range(2):
+                try:
+                    fits_path = download_fits(url, tmp_path)
+                    try:
+                        aia_map = read_synoptic(fits_path)
+                        exptime = float(aia_map.meta.get("exptime", 0.0))
+                        normalised = exposure_normalise(aia_map.data, exptime)
 
-                import sunpy.map
+                        import sunpy.map
 
-                grid = reproject_to_frame(
-                    sunpy.map.Map(normalised, aia_map.meta), target_wcs, target_shape
-                )
-            finally:
-                fits_path.unlink(missing_ok=True)
+                        grid = reproject_to_frame(
+                            sunpy.map.Map(normalised, aia_map.meta), target_wcs, target_shape
+                        )
+                    finally:
+                        fits_path.unlink(missing_ok=True)
+                    last_exc = None
+                    break
+                except OSError as exc:
+                    last_exc = exc
+                    if attempt == 0:
+                        time.sleep(2.0)
+            if last_exc is not None:
+                raise last_exc
 
             finite = grid[np.isfinite(grid)]
             if finite.size == 0:
@@ -217,9 +231,8 @@ def main() -> int:
     cfg = load_data_config()
     setup_logging(log_file=cfg.paths.artifacts / "logs" / "download_aia.log")
 
-    window = cfg.case_study if args.case_study else cfg.time_range
-    start = args.start or window.start
-    end = args.end or window.end
+    start = args.start or cfg.time_range.start
+    end = args.end or cfg.time_range.end
 
     frames_dir = cfg.paths.processed / "frames"
     wcs_path = cfg.paths.interim / "frame_wcs.parquet"
@@ -227,10 +240,7 @@ def main() -> int:
     work_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 70)
-    logger.info(
-        "ดาวน์โหลดภาพ AIA: %s ถึง %s%s",
-        start, end, "  [CASE STUDY]" if args.case_study else "",
-    )
+    logger.info("ดาวน์โหลดภาพ AIA: %s ถึง %s", start, end)
     logger.info("=" * 70)
 
     # ------------------------------------------------------------------ #

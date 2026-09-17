@@ -364,6 +364,36 @@ class TestConfusionMatrix:
         assert before == after
 
 
+class TestFlarePositions:
+    """แผนที่ตำแหน่ง flare หน้าแรก — ต้องเป็นชุด flare เดียวกับแคตตาล็อกของโมเดลเสมอ"""
+
+    def test_health_exposes_flag(self, client):
+        assert isinstance(client.get("/api/health").json()["flare_positions"], bool)
+
+    def test_missing_file_returns_actionable_error(self, client):
+        response = client.get("/api/flare-positions")
+        if response.status_code == 200:
+            pytest.skip("มีไฟล์ตำแหน่ง flare อยู่แล้วในเครื่องนี้")
+        assert response.status_code == 503
+        assert "backend/scripts/" in response.json()["detail"]
+
+    def test_columns_align_and_follow_model_catalog(self, client):
+        response = client.get("/api/flare-positions")
+        if response.status_code != 200:
+            pytest.skip("ยังไม่ได้รัน build_flare_positions.py")
+        data = response.json()
+
+        lists = {k: v for k, v in data.items() if isinstance(v, list)}
+        assert {len(v) for v in lists.values()} == {data["n"]}
+        assert data["n_located"] <= data["n_matched"] <= data["n"]
+        assert {c[0] for c in data["goes_class"]} <= {"C", "M", "X"}
+
+        # จำนวนดวงต้องเท่ากับ flare C+ ที่ไม่ซ้ำในแคตตาล็อกของโมเดลเป๊ะ — ไม่เพิ่ม ไม่ตัด
+        goes = client.get("/api/goes?start=1990-01-01&end=2100-01-01&min_class=C1.0")
+        if goes.status_code == 200:
+            assert goes.json()["n_events"] == data["n"]
+
+
 class TestIntensitySeries:
     """ความเข้มแสงราย AR ตามเวลา — กราฟฝั่งขวาของ dashboard"""
 
@@ -397,7 +427,7 @@ class TestIntensitySeries:
 
         data = r.json()
         assert data["n_frames"] >= 1
-        assert {c["key"] for c in data["channels"]} == {"171", "304", "1600"}
+        assert {"171", "304", "1600"}.issubset({c["key"] for c in data["channels"]})
 
         for track in data["tracks"]:
             assert track["n_points"] == len(track["times"])

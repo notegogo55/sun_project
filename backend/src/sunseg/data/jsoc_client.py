@@ -11,14 +11,44 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# drms/urllib ไม่ตั้ง timeout ให้ socket โดย default (ไม่มีขีดจำกัดเลย) — พบจริงว่า
+# connection ที่ client ใช้ซ้ำมานาน (thousands of request ต่อ process เดียวตลอดงาน
+# ดาวน์โหลดหลายวัน) บางครั้งค้างเงียบได้หลายนาทีโดยไม่มี error ให้ _with_retry จับ เลย
+# ไม่ retry เลยสักครั้ง (แยกไปเปิด connection ใหม่ทดสอบพร้อมกันตอนที่ค้างอยู่ ได้ผลตอบ
+# กลับใน 1-2 วิ ยืนยันว่าฝั่ง JSOC ไม่ได้ช้า connection เดิมของ process นี้ต่างหากที่ค้าง)
+# ตั้ง default timeout ระดับ process ไว้กันไม่ให้ค้างไม่มีที่สิ้นสุด — หมดเวลาแล้วจะโยน
+# ``socket.timeout`` ซึ่ง ``_with_retry`` จับได้และลองใหม่ (เปิด connection ใหม่ ซึ่งพิสูจน์
+# แล้วว่าเร็วปกติ) ตั้งไว้สูง (90 วิ) เพราะคำขอ export ปกติก็ใช้เวลาได้ถึงหลักสิบวิอยู่แล้ว
+socket.setdefaulttimeout(90.0)
+
+# หมายเหตุ: ``socket.setdefaulttimeout`` ครอบเฉพาะ operation หลัง socket ถูกสร้างแล้ว
+# (connect/send/recv) — ``socket.getaddrinfo`` (DNS resolve) ที่ ``urllib`` เรียกก่อนสร้าง
+# socket ไม่ถูกจำกัดเวลาด้วยค่านี้เลย พบจริงว่า process ค้างเงียบ "ไม่มี log อะไรเลย" นาน
+# กว่า 90 วิ (ไม่มี WARNING จาก _with_retry ให้เห็นด้วยซ้ำ) แม้เพิ่ง start ใหม่ ยังไม่ทันมี
+# connection เก่าให้ reuse — เข้าเงื่อนไข DNS hang ระดับ OS มากกว่า socket hang ธรรมดา จึง
+# ต้องมี hard timeout ระดับ thread ครอบอีกชั้น (ดู ``_HARD_CALL_TIMEOUT_S`` /
+# ``JsocClient._call_with_hard_timeout``) เพราะ getaddrinfo ที่ค้างจริงจะค้างไม่มีกำหนด
+_HARD_CALL_TIMEOUT_S = 110.0
+
+# คำขอที่โอนข้อมูลจริง (``request.download``) ต้องให้เวลามากกว่า metadata/keyword query
+# ธรรมดา — พบจริงว่าตอนเน็ตแย่ (packet loss สูงไปเซิร์ฟเวอร์ที่ Stanford, RTT ~260ms) ไฟล์
+# magnetogram ~14MB ใช้เวลาโอนจริงได้หลายนาที (เคยเจอ 6-7 นาที) ถ้าตั้ง timeout สั้นแบบ
+# keyword query (110 วิ) จะ abandon thread ที่กำลังโอนข้อมูลอยู่จริงทั้งที่ใกล้เสร็จ — เสียของ
+# เปล่า (thread ที่ถูกทิ้งจะโอนต่อจนเสร็จเองในพื้นหลัง แต่ผลลัพธ์มาช้าเกินจะใช้ เพราะฝั่งที่
+# เรียกยกเลิกไปแล้ว) จึงต้องให้เวลานานกว่านี้มากสำหรับ call ที่โอนข้อมูลจริงโดยเฉพาะ
+_HARD_DOWNLOAD_TIMEOUT_S = 600.0
 
 # รูปแบบเวลาที่ DRMS record-set notation ใช้: 2011.01.01_00:00:00_TAI
 _DRMS_TIME_FMT = "%Y.%m.%d_%H:%M:%S_TAI"
@@ -108,11 +138,36 @@ class JsocClient:
     # retry helper
     # ------------------------------------------------------------------ #
 
-    def _with_retry(self, description: str, fn, *args, **kwargs):
+    @staticmethod
+    def _call_with_hard_timeout(fn, args, kwargs, timeout_s: float = _HARD_CALL_TIMEOUT_S):
+        """เรียก ``fn`` ใน thread แยก แล้วบังคับ timeout จริง — กัน DNS/connection
+        ค้างไม่มีกำหนดที่ ``socket.setdefaulttimeout`` เอาไม่อยู่ (ดูหมายเหตุบนสุดของ
+        ไฟล์) thread ที่ค้างจะถูกทิ้งไว้ (Python ฆ่า thread ไม่ได้) แต่ฝั่งเรียกจะได้
+        ``TimeoutError`` กลับไปให้ ``_with_retry`` ลองใหม่แทนที่จะค้างทั้ง process"""
+        # ห้ามใช้ context manager (`with ThreadPoolExecutor(...) as pool`) — ตอน
+        # exit มันเรียก shutdown(wait=True) ซึ่งจะรอ thread ที่ค้างอยู่จนจบ เท่ากับ
+        # ค้างต่อเหมือนเดิม ต้อง shutdown(wait=False) เองตอน timeout เพื่อปล่อยมือ
+        # จาก thread ที่ยังค้างอยู่จริง ๆ (ฆ่าไม่ได้ แต่ไม่ต้องรอมันด้วย)
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(fn, *args, **kwargs)
+        try:
+            result = future.result(timeout=timeout_s)
+        except FutureTimeoutError:
+            pool.shutdown(wait=False)
+            raise TimeoutError(
+                f"ไม่ตอบสนองเกิน {timeout_s:.0f} วินาที (อาจเป็น DNS/connection ค้าง)"
+            ) from None
+        else:
+            pool.shutdown(wait=False)
+            return result
+
+    def _with_retry(
+        self, description: str, fn, *args, hard_timeout_s: float = _HARD_CALL_TIMEOUT_S, **kwargs
+    ):
         last_exc: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                return fn(*args, **kwargs)
+                return self._call_with_hard_timeout(fn, args, kwargs, timeout_s=hard_timeout_s)
             except Exception as exc:  # noqa: BLE001 — drms โยน exception ได้หลากหลายชนิด
                 last_exc = exc
                 if attempt == self.max_retries:
@@ -338,6 +393,63 @@ class JsocClient:
     # segment export (ต้องมีอีเมลที่ลงทะเบียนแล้ว)
     # ------------------------------------------------------------------ #
 
+    def export_fast(
+        self,
+        recordset: str,
+        segments: list[str],
+        out_dir: Path,
+        method: str = "url_quick",
+        protocol: str = "as-is",
+    ) -> pd.DataFrame:
+        """เหมือน :meth:`export_segments` แต่ใช้ ``url_quick``/``as-is`` — **ไม่เข้าคิว
+        export ของ JSOC เลย** (วัดจริง: ~2-20 วิ/คำขอ แทนที่จะเป็น 20-60 วิ) เพราะ
+        ``request.id`` เป็น ``None`` เสมอ — ไม่มี object ให้ track สถานะ จึงไม่มี
+        "pending export request" ให้ชนกับคำขออื่นแบบที่ :meth:`export_segments` ต้อง
+        กัน (ดู :meth:`_retry_on_pending`)
+
+        แลกมาด้วยไฟล์ที่ header **ไม่มี WCS เลย** (มีแค่ NAXIS/BITPIX) เพราะ JSOC ส่ง
+        segment ดิบบนดิสก์มาตรง ๆ ไม่ได้เขียน keyword จาก DRMS DB ลงไปให้เหมือน
+        ``protocol="fits"`` — ค่าพิกเซลเหมือนกันทุกประการ (คนละวิธีดึงข้อมูลเดียวกัน)
+        ผู้เรียกต้องต่อ WCS เองจาก keyword query แยกต่างหาก (:func:`frame_wcs.fetch_frame_wcs`
+        / :func:`frame_wcs.fetch_sharp_wcs` + :func:`frame_wcs.map_from_as_is`) ก่อน
+        สร้าง ``sunpy.map.Map`` — **ห้ามเรียก** ``sunpy.map.Map(fits_path)`` ตรง ๆ กับ
+        ไฟล์ที่ได้จากเมธอดนี้ จะพังด้วย "Image coordinate units for axis 1 not
+        present in metadata" แบบเดียวกับที่ ``export_segments`` เขียนเตือนไว้
+
+        Returns
+        -------
+        DataFrame ที่มีคอลัมน์ ``record`` และ ``download`` (path ในเครื่อง) เหมือน
+        :meth:`export_segments`
+        """
+        if not self.email:
+            raise RuntimeError(
+                "การ export ต้องใช้อีเมลที่ลงทะเบียนกับ JSOC — "
+                "ตั้งค่า SUNSEG_JSOC_EMAIL ใน .env"
+            )
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        query = f"{recordset}{{{','.join(segments)}}}"
+
+        request = self._with_retry(
+            f"export (fast) {query}",
+            self.client.export,
+            query,
+            method=method,
+            protocol=protocol,
+            email=self.email,
+        )
+        if getattr(request, "status", 0) != 0:
+            raise RuntimeError(
+                f"JSOC ปฏิเสธคำขอ export (fast) ({query}): status={request.status}"
+            )
+
+        result = self._with_retry(
+            f"download (fast) {query}", request.download, str(out_dir),
+            hard_timeout_s=_HARD_DOWNLOAD_TIMEOUT_S,
+        )
+        logger.info("ดาวน์โหลดสำเร็จ (fast) %d ไฟล์ไปที่ %s", len(result), out_dir)
+        return result
+
     def export_segments(
         self,
         recordset: str,
@@ -350,15 +462,19 @@ class JsocClient:
     ) -> pd.DataFrame:
         """สั่ง export แล้วดาวน์โหลดไฟล์ FITS ของ segment ที่ระบุ
 
-        **ต้องใช้ ``url``/``fits`` เท่านั้น — ห้ามเปลี่ยนกลับไป ``url_quick``/``as-is``**
-        JSOC เก็บ keyword ไว้ในฐานข้อมูล DRMS ไม่ได้เก็บใน FITS header ไฟล์ segment
-        ดิบบนดิสก์ที่ ``as-is`` ส่งกลับมาจึงมี header เปล่า (ไม่มี WCS เลยสักตัว) และ
+        ใช้ ``url``/``fits`` — JSOC เก็บ keyword ไว้ในฐานข้อมูล DRMS ไม่ได้เก็บใน FITS
+        header ไฟล์ segment ดิบบนดิสก์ ถ้าเปลี่ยนไปใช้ ``url_quick``/``as-is`` ตรง ๆ
+        โดยไม่ต่อ WCS เอง ไฟล์จะมี header เปล่า (ไม่มี WCS เลยสักตัว) และ
         ``sunpy.map.Map`` จะล้มด้วย "Image coordinate units for axis 1 not present in
         metadata" ส่วน ``protocol="fits"`` สั่งให้ JSOC สร้างไฟล์ใหม่พร้อมเขียน keyword
         ลง header ให้ (~110 ตัว รวม CTYPE/CUNIT/CRVAL/CDELT/CRPIX/CROTA2/RSUN_OBS/DSUN_OBS)
         ซึ่งจำเป็นทั้งกับภาพเต็มดวงและ SHARP patch เพราะ mask สร้างจากการแปลงพิกัดผ่าน WCS
 
-        แลกมาด้วยการเข้าคิว export ของ JSOC (~20-60 วินาทีต่อคำขอ แทนที่จะได้ทันที)
+        แลกมาด้วยการเข้าคิว export ของ JSOC (~20-60 วินาทีต่อคำขอ แทนที่จะได้ทันที) —
+        ถ้าต้องดาวน์โหลดจำนวนมาก (หลักพันเฟรมขึ้นไป) ใช้ :meth:`export_fast` แทน:
+        ได้ไฟล์ ``as-is`` แบบไม่เข้าคิวเลย (ค่าพิกเซลเหมือนกันทุกประการ) แล้วต่อ WCS เอง
+        จาก keyword query ด้วย ``frame_wcs.fetch_frame_wcs``/``fetch_sharp_wcs`` +
+        ``frame_wcs.map_from_as_is`` — ดู ``download_images.py`` เป็นตัวอย่าง
 
         Parameters
         ----------
@@ -430,7 +546,8 @@ class JsocClient:
             )
 
         result = self._with_retry(
-            f"download {query}", request.download, str(out_dir), timeout=read_timeout_s
+            f"download {query}", request.download, str(out_dir), timeout=read_timeout_s,
+            hard_timeout_s=max(_HARD_DOWNLOAD_TIMEOUT_S, read_timeout_s + 60.0),
         )
         logger.info("ดาวน์โหลดสำเร็จ %d ไฟล์ไปที่ %s", len(result), out_dir)
         return result

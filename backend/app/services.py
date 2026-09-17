@@ -14,6 +14,7 @@ import pandas as pd
 
 from sunseg.config import DataConfig, load_data_config, load_tracking_config
 from sunseg.data.aia import AiaFrameStore
+from sunseg.data.flare_positions import FlarePositionStore
 from sunseg.data.frame_wcs import FrameWcsStore
 from sunseg.data.proton_flux import ProtonFluxStore
 from sunseg.data.xray_flux import XrayFluxStore
@@ -46,6 +47,7 @@ class AppServices:
         )
         self.sequences = SequenceStore(processed / "sequences")
         self.flares = self._load_flares(self.config.paths.interim / "flares.parquet")
+        self.flare_positions = FlarePositionStore(processed / "flare_positions.parquet")
         self.proton = ProtonFluxStore(self.config.proton.root)
         self.xray = XrayFluxStore(self.config.paths.raw / "xrs")
         self.frame_wcs = FrameWcsStore(self.config.paths.interim / "frame_wcs.parquet")
@@ -91,6 +93,11 @@ class AppServices:
                 "รายการ flare (GOES)",
                 self.flares is not None,
                 "รัน backend/scripts/download_metadata.py",
+            ),
+            (
+                "ตำแหน่ง flare จาก PositionFlare (แผนที่หน้าแรก)",
+                self.flare_positions.available,
+                "รัน backend/scripts/build_flare_positions.py",
             ),
             # ไม่ใช่ผลจากสคริปต์ในโปรเจคนี้ — เป็นคลังภายนอกที่ชี้ด้วย SUNSEG_PROTON_DIR
             ("ฟลักซ์โปรตอน (GOES particle)", self.proton.available, "ตั้ง SUNSEG_PROTON_DIR ใน .env"),

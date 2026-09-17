@@ -58,18 +58,26 @@ WCS_KEYS: tuple[str, ...] = (
 #: ขนาดภาพเต็มดวงต้นฉบับของ HMI — WCS ที่ดึงมาอ้างอิงกริดนี้ ก่อนถูก bin ลงเป็น 512
 FULLDISK_SIZE = 4096
 
+#: keyword เพิ่มจาก WCS_KEYS ที่ต้องใช้ระบุตัวตนของ SHARP patch (ไม่เกี่ยวกับ WCS
+#: โดยตรง แต่ ``build_fulldisk_identity_map`` ต้องมี ``harpnum`` ใน ``patch_map.meta``
+#: เพื่อบอกว่าแต่ละ patch เป็นของ HARP ไหน)
+SHARP_EXTRA_KEYS: tuple[str, ...] = ("HARPNUM", "NOAA_AR", "NOAA_ARS")
+
 
 def frame_stem(moment: datetime) -> str:
     """ชื่อไฟล์เฟรมมาตรฐานของโปรเจค (ตรงกับ ``save_frame``)"""
     return moment.strftime("%Y%m%d_%H%M%S")
 
 
-def _header_from_row(row: pd.Series, size: int = FULLDISK_SIZE) -> dict:
-    """ประกอบ FITS header ขั้นต่ำที่ astropy ต้องใช้สร้าง WCS ของกริด ``size``"""
-    return {
+def _build_header(row: pd.Series, naxis1: int, naxis2: int) -> dict:
+    """ประกอบ FITS header ขั้นต่ำที่ astropy/sunpy ต้องใช้สร้าง WCS ของภาพขนาด
+    ``naxis1`` x ``naxis2`` จาก keyword row เดียว (ภาพเต็มดวงหรือ SHARP patch ก็ได้
+    — คอลัมน์ที่ใช้เหมือนกันทุกตัว มีแค่ขนาดภาพที่ต่างกัน)
+    """
+    header = {
         "naxis": 2,
-        "naxis1": size,
-        "naxis2": size,
+        "naxis1": naxis1,
+        "naxis2": naxis2,
         "ctype1": str(row["CTYPE1"]),
         "ctype2": str(row["CTYPE2"]),
         "cunit1": str(row["CUNIT1"]),
@@ -93,6 +101,23 @@ def _header_from_row(row: pd.Series, size: int = FULLDISK_SIZE) -> dict:
         "telescop": "SDO/HMI",
         "instrume": "HMI",
     }
+    # HARPNUM มีเฉพาะ keyword row ของ SHARP (ไม่มีในภาพเต็มดวง) —
+    # build_fulldisk_identity_map อ่านค่านี้จาก patch_map.meta ต้องใส่เมื่อมี
+    if "HARPNUM" in row.index and pd.notna(row["HARPNUM"]):
+        header["harpnum"] = int(row["HARPNUM"])
+    return header
+
+
+def _header_from_row(row: pd.Series, size: int = FULLDISK_SIZE) -> dict:
+    """ประกอบ FITS header ขั้นต่ำที่ astropy ต้องใช้สร้าง WCS ของกริด ``size``"""
+    return _build_header(row, size, size)
+
+
+def header_for_shape(row: pd.Series, naxis1: int, naxis2: int) -> dict:
+    """เหมือน :func:`_header_from_row` แต่ระบุขนาดภาพตรง ๆ แทนกริดสี่เหลี่ยมจัตุรัส —
+    ใช้กับ SHARP patch ที่แต่ละดวงมีขนาดไม่เท่ากัน (ต่างจากภาพเต็มดวงที่ตายตัว 4096)
+    """
+    return _build_header(row, naxis1, naxis2)
 
 
 class FrameWcsStore:
@@ -177,6 +202,26 @@ class FrameWcsStore:
         return sunpy.map.Map(data, wcs_small.to_header())
 
 
+def map_from_as_is(path: Path, row: pd.Series):
+    """สร้าง ``sunpy.map.Map`` จากไฟล์ FITS แบบ ``as-is`` (header เปล่า ไม่มี WCS)
+    โดยต่อ WCS เข้าไปเองจาก ``row`` keyword ที่ query แยกมาต่างหาก (ดู
+    :func:`fetch_frame_wcs` / :func:`fetch_sharp_wcs`)
+
+    ใช้แทนการเปิดไฟล์ที่ export ด้วย ``protocol="fits"`` ตรง ๆ — ค่าพิกเซลเหมือนกัน
+    ทุกประการ (คนละวิธีดึงข้อมูลเดียวกันจาก JSOC) แต่ ``as-is``/``url_quick`` ไม่ต้อง
+    เข้าคิว export (ดู ``JsocClient.export_fast``)
+    """
+    from astropy.io import fits
+    import sunpy.map
+
+    with fits.open(path) as hdul:
+        hdu = hdul[1] if len(hdul) > 1 else hdul[0]
+        data = hdu.data.astype(float)
+
+    header = _build_header(row, naxis1=data.shape[1], naxis2=data.shape[0])
+    return sunpy.map.Map(data, header)
+
+
 # --------------------------------------------------------------------------- #
 # การดึงข้อมูลมาเติมดัชนี (ใช้จาก scripts/download_aia.py)
 # --------------------------------------------------------------------------- #
@@ -215,6 +260,21 @@ def fetch_frame_wcs(client, series: str, timestamps: list[str]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=["frame", *WCS_KEYS])
     return pd.concat(rows, ignore_index=True)
+
+
+def fetch_sharp_wcs(client, series: str, moment: datetime) -> pd.DataFrame:
+    """ดึง keyword WCS ของ **ทุก HARP** ณ เวลาเดียว ในคำขอเดียว (bulk keyword query
+    ไม่เข้าคิว export เหมือน :func:`fetch_frame_wcs`) — คืน ``DataFrame`` ที่มี
+    คอลัมน์ ``HARPNUM`` ให้จับคู่กับไฟล์ ``bitmap`` ที่ export แบบ ``as-is`` มา
+
+    เว้นระยะจาก :func:`fetch_frame_wcs` ที่ดึงทีละเฟรม (ภาพเต็มดวงมีระเบียนเดียวต่อ
+    เวลา) เพราะ SHARP หนึ่งเวลามีได้หลาย HARP — DRMS recordset ``[][time]`` (วงเล็บ
+    ว่างตัวแรก = ทุก HARPNUM) คืนมาเป็นหลายแถวในคำเดียว
+    """
+    from .jsoc_client import to_drms_time
+
+    recordset = f"{series}[][{to_drms_time(moment)}]"
+    return client.query_keywords(recordset, [*WCS_KEYS, *SHARP_EXTRA_KEYS])
 
 
 def merge_and_save(path: Path, fresh: pd.DataFrame) -> pd.DataFrame:

@@ -140,6 +140,10 @@ export function AppProvider({ children }) {
     if (!health.segmentation_model && health.n_frames === 0) {
       missingSetup.push(["python backend/scripts/download_images.py", "python backend/scripts/build_masks.py"]);
     }
+    // แผนที่ตำแหน่ง flare หน้าแรก — ต้องมี flares.parquet ของโมเดลก่อน แล้วค่อยจับคู่กับ PositionFlare
+    if (!health.flare_positions) {
+      missingSetup.push(["python backend/scripts/build_flare_positions.py"]);
+    }
   }
 
   /* ── HARP ที่เลือก + พยากรณ์ ─────────────────────────────────── */

@@ -156,3 +156,63 @@ class TestExtractFrameIntensities:
             channel_arrays={"171": np.full((16, 16), 100.0)},
         )
         assert rows == []
+
+    def test_blobs_of_the_same_harp_become_one_row_measured_over_their_union(self):
+        # U-Net แตก AR ดวงเดียวเป็นสอง blob ใน HARP เดียวกัน: ชิ้นใหญ่สว่าง 9 เท่า ชิ้นเล็กสว่าง
+        # 3 เท่าของ quiet Sun — ต้องได้แถวเดียวที่วัดจากทั้งสองชิ้นรวมกัน ไม่ใช่ชิ้นใดชิ้นหนึ่ง
+        # (เดิมได้สองแถว แล้วปลายทาง dedupe เก็บชิ้นเล็ก)
+        from sunseg.tracking.detect import detect_regions
+
+        mask = np.zeros((32, 32), dtype=np.uint8)
+        mask[2:8, 2:8] = 1
+        mask[20:24, 20:24] = 1
+        identity = np.zeros((32, 32), dtype=np.int32)
+        identity[0:30, 0:30] = 111
+        # โซนสว่างกว้างกว่า blob เพราะ detect_regions ทำ morphology (close/open) ที่ขยับขอบได้
+        # 1 พิกเซล — พิกเซลที่ถูกวัดจึงตกในโซนสว่างของชิ้นตัวเองเสมอ
+        channel_171 = np.full((32, 32), 100.0, dtype=np.float32)
+        channel_171[0:11, 0:11] = 900.0
+        channel_171[18:27, 18:27] = 300.0
+        magnetogram = np.zeros((32, 32), dtype=np.float32)
+
+        rows = extract_frame_intensities(
+            timestamp="20240501_000000",
+            magnetogram=magnetogram,
+            predicted_mask=mask,
+            identity_map=identity,
+            channel_arrays={"171": channel_171},
+            min_area_px=4,
+        )
+        big, small = detect_regions(mask, magnetogram=magnetogram, min_area_px=4)  # เรียงใหญ่ -> เล็ก
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["HARPNUM"] == 111
+        assert row["n_blobs"] == 2
+        assert row["area_px"] == row["171_n_pixels"] == big.area_px + small.area_px
+        assert row["171_mean"] == pytest.approx(
+            (9 * big.area_px + 3 * small.area_px) / (big.area_px + small.area_px)
+        )
+        assert row["171_median"] == pytest.approx(9.0)
+
+    def test_each_harp_appears_at_most_once_per_frame(self):
+        mask = np.zeros((32, 32), dtype=np.uint8)
+        mask[2:6, 2:6] = 1
+        mask[2:6, 10:14] = 1
+        mask[20:26, 20:26] = 1
+        identity = np.zeros((32, 32), dtype=np.int32)
+        identity[0:8, 0:16] = 111  # สอง blob แรก
+        identity[18:28, 18:28] = 222
+
+        rows = extract_frame_intensities(
+            timestamp="20240501_000000",
+            magnetogram=np.zeros((32, 32), dtype=np.float32),
+            predicted_mask=mask,
+            identity_map=identity,
+            channel_arrays={"171": np.full((32, 32), 100.0, dtype=np.float32)},
+            min_area_px=4,
+        )
+
+        harps = [row["HARPNUM"] for row in rows]
+        assert sorted(harps) == [111, 222]
+        assert {row["HARPNUM"]: row["n_blobs"] for row in rows} == {111: 2, 222: 1}

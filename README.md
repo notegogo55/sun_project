@@ -61,7 +61,7 @@ python backend/scripts/train_lstm.py
 #    ต้องมีอีเมล JSOC ใน .env  ·  ทดสอบด้วยไม่กี่เฟรมก่อนเสมอ
 python backend/scripts/download_images.py --start 2014-10-20 --end 2014-10-28 --limit 5
 python backend/scripts/plot_masks.py          # << ตรวจด้วยตาก่อน! (ดูหมายเหตุด้านล่าง)
-python backend/scripts/download_images.py     # แล้วค่อยดึงเต็มช่วง (หลายชั่วโมง)
+python backend/scripts/download_images.py     # แล้วค่อยดึงเต็มช่วง (เร็วขึ้นมาก — ดูหมายเหตุด้านล่าง)
 
 # 5) เทรน U-Net
 python backend/scripts/train_unet.py --overfit-one-batch   # ตรวจสุขภาพโมเดลก่อน
@@ -72,7 +72,10 @@ python backend/scripts/download_aia.py --wcs-only          # ดึง WCS ข�
 python backend/scripts/download_aia.py --limit 5           # ทดสอบไม่กี่เฟรมก่อนเสมอ
 python backend/scripts/plot_aia_alignment.py               # << ตรวจด้วยตาก่อน! (ดูหมายเหตุด้านล่าง)
 python backend/scripts/download_aia.py                     # แล้วค่อยดึงเต็มช่วง (~45 นาที)
-python backend/scripts/download_aia.py --case-study         # เฟรม case study 2024 (อยู่นอก time_range)
+
+# 6.5) ตำแหน่ง flare สำหรับแผนที่หน้าแรก — ยืมพิกัดจาก PositionFlare มาแปะให้ flare ของแคตตาล็อกโมเดล
+#      (ต้องมี flares.parquet จากขั้นตอน 1 และ CSV ของ PositionFlare — ดูหัวข้อ "ตำแหน่ง flare" ด้านล่าง)
+python backend/scripts/build_flare_positions.py
 
 # 7) เปิด webapp — backend (FastAPI, backend/app) กับ frontend (React + Vite, frontend/)
 #    เป็นคนละ process/container เสมอ ต้องรันคู่กัน
@@ -88,6 +91,16 @@ cd frontend && npm install && npm run dev            # frontend: http://localhos
 > **ไม่จำเป็นต้องทำขั้นตอน 1–6 ให้ครบก่อนถึงจะเปิดเว็บได้** — แอปออกแบบให้เปิดได้เสมอแม้ยังไม่มี
 > โมเดลหรือข้อมูลบางส่วน ส่วนที่ยังไม่พร้อมจะขึ้นสถานะ "ยังไม่พร้อม" พร้อมบอกว่าต้องรันสคริปต์ไหนต่อ
 > แทนที่จะพังทั้งหน้า จะรัน `uvicorn` (ขั้นตอนที่ 7) ทันทีหลังติดตั้งเสร็จก็ได้
+
+> **ทำไม `download_images.py` เร็วขึ้นมาก**: แต่เดิม export ภาพเต็มดวง + SHARP bitmap ด้วย
+> `protocol="fits"` ต้องเข้าคิว export ของ JSOC ทุกคำขอ (~20-60 วิ/คำขอ วัดจากงานจริง: ดาวน์โหลด
+> 5,112 เฟรมช่วง 2011-2017 ที่ cadence 12 ชม. กิน ~9 วัน) ตอนนี้ใช้ `method="url_quick"`,
+> `protocol="as-is"` แทน (`JsocClient.export_fast`) ซึ่ง**ไม่เข้าคิวเลย** (`request.id` เป็น `None`
+> เสมอ — วัดจริง ~2-20 วิ/คำขอ) แล้วต่อ WCS เข้า header เองจาก keyword query แยกต่างหาก
+> (`frame_wcs.fetch_frame_wcs`/`fetch_sharp_wcs`) ด้วยเทคนิคเดียวกับที่ `--wcs-only` ของขั้นตอน 6
+> ใช้อยู่แล้ว — ค่าพิกเซลและ keyword ที่ได้เหมือนกันทุกประการเพราะมาจาก DRMS record เดียวกัน
+> (JSOC แค่เขียน keyword ลง header ให้ตอน `protocol="fits"` ไม่ได้คำนวณอะไรใหม่) ตรวจแล้วว่า
+> จำนวน patch ที่ใช้และ % mask coverage ตรงกับวิธีเดิมเป๊ะในเฟรมทดสอบ
 
 > **ห้ามข้ามขั้นตอน `plot_masks.py`** — mask ถูกสร้างโดยแปลงพิกัดจาก SHARP patch ไปยังภาพเต็มดวงผ่าน WCS
 > ถ้าการแปลงผิด mask จะเลื่อนไปจากตำแหน่งจริงทั้งภาพ โมเดลจะยังเทรนได้และ loss จะลดลงสวยงาม แต่เรียนรู้
@@ -142,7 +155,32 @@ docker compose up --build
 | HEK | รายการ flare ทางเลือก (`--flare-source hek`) — ยืดหยุ่นกว่าแต่ช้ากว่ามาก |
 | [ตาราง HARPNUM↔NOAA](http://jsoc.stanford.edu/doc/data/hmi/harpnum_to_noaa/all_harps_with_noaa_ars.txt) | เชื่อม SHARP เข้ากับ flare catalog |
 | คลัง GOES particle ราย 5 นาที (ภายนอก) | ฟลักซ์โปรตอนรอบเวลาที่เกิด flare — แผง "Proton flux" ในหน้าเว็บ (ดูด้านล่าง) |
+| PositionFlare `flares_all_cycles.csv` (ภายนอก) | ตำแหน่ง flare บนแผนที่หน้าแรก — จับคู่เข้ากับแคตตาล็อกโมเดลด้วยเวลาพีค (ดูด้านล่าง) |
 | NOAA NCEI `xrsf-l2-avg1m_science` (GOES-15) | ฟลักซ์ X-ray ต่อเนื่องรายนาที — เส้น "GOES X-Ray" ในแดชบอร์ด (ดูด้านล่าง) |
+
+### ตำแหน่ง flare บนแผนที่หน้าแรก (PositionFlare)
+
+แผนที่ในหน้าแรกแสดง **flare ชุดเดียวกับที่ LSTM ใช้ทำ label** (`data/interim/flares.parquet`
+ระดับ C ขึ้นไป — คลาสและจำนวนดวงตรงกับแคตตาล็อกของโมเดลเป๊ะ) แต่แคตตาล็อกนั้นมีพิกัดแค่ปี ≤ 2017
+(รายงาน NGDC) พิกัดจึงยืมมาจากแคตตาล็อกของโปรเจค PositionFlare (`flares_all_cycles.csv` —
+SWPC > XRS > XRS-HPC > AR, ครอบ 1996-2026) โดย `build_flare_positions.py` จับคู่ทีละดวงด้วย
+**เวลาพีค** (ใกล้สุดภายใน ±10 นาที, ฟลักซ์ต่างกันไม่เกิน 4 เท่า, หนึ่งดวงของ PositionFlare
+จับคู่ได้ครั้งเดียว) แล้วเขียน `data/processed/flare_positions.parquet` ให้ API `/api/flare-positions`
+
+| | |
+|---|---|
+| flare ของโมเดล (C+) | 11,394 ดวง · 2011 → 2025 |
+| จับคู่ PositionFlare ได้ | 10,930 (95.9%) — เวลาพีคตรงกันเป๊ะ 10,551 คู่ |
+| มีพิกัดบนแผนที่ | 10,637 (93.4%) — เดิม 3,327 ดวงจากรายงาน NGDC อย่างเดียว |
+
+- **ไม่เทียบคลาสตอนจับคู่** เพราะสเกลต่างกัน: รายงาน NGDC เดิมยังคูณ 0.7 ของ GOES-13/15 ส่วน
+  PositionFlare ใช้ค่า science (C1.0 ของโมเดล = C1.4 ใน PositionFlare) หน้าเว็บแสดงคลาสของโมเดล
+  เป็นหลักและคลาสของ PositionFlare กำกับไว้
+- flare ของ PositionFlare ที่ **ไม่อยู่** ในแคตตาล็อกโมเดล (~16,000 ดวงในช่วงเดียวกัน ส่วนใหญ่ปี
+  2018-2023 ที่ไม่มีคู่ HARP) ไม่ขึ้นบนแผนที่โดยเจตนา
+- CSV ของ PositionFlare อยู่นอก repo ตั้ง path ได้ที่ `position_flare.csv` ใน `configs/data.yaml`
+  หรือ env `SUNSEG_POSITION_FLARE_CSV` — ใช้ตอนรันสคริปต์เท่านั้น ตัวแอปอ่านไฟล์ใน `data/processed`
+  รันสคริปต์ซ้ำเมื่อแคตตาล็อกฝั่งใดฝั่งหนึ่งอัปเดต แล้วรีสตาร์ต backend
 
 ### ภาพ AIA สามชั้นบรรยากาศ (ไม่บังคับ)
 
@@ -186,7 +224,7 @@ WCS ติดมาด้วย `--wcs-only` จะ query *keyword* จาก JS
 | ช่วง | cadence | ผลที่ได้ |
 |---|---|---|
 | ชุดหลัก 2011-2017 | 7 วัน | เห็นแนวโน้มระยะยาว แต่ AR ที่อายุสั้นกว่า 7 วันจะหายไปทั้งดวง และการจับคู่ข้ามช่องว่างอาศัยการทำนายจากกฎการหมุนเป็นหลัก |
-| case study พ.ค. 2024 | 12 ชม. | เส้นต่อเนื่อง ติดตาม AR ได้หลายสิบจุด — ช่วงที่เหมาะกับการดูวิวัฒนาการมากที่สุด |
+| พ.ค. 2024 | 12 ชม. | เส้นต่อเนื่อง ติดตาม AR ได้หลายสิบจุด — ช่วงที่เหมาะกับการดูวิวัฒนาการมากที่สุด |
 
 API จะแนบ `note` อธิบายข้อจำกัดของช่วงที่เลือกมาด้วยเสมอ และหน้าเว็บแสดงข้อความนั้นให้เห็น
 
@@ -361,9 +399,11 @@ backend/
   Dockerfile        build จาก root ของ repo (ต้องการ README.md นอก backend/)
 frontend/           React + Vite — คนละ container/process จาก backend เสมอ
   src/
-    state/            AppProvider — ศูนย์กลาง state ของแอป (เทียบเท่า `state` object เดิม)
-    components/       แบ่งตามแผงของ dashboard (Hero, Dashboard/, About/)
-    lib/              เรียก API, ค่าคงที่ของกราฟ, ตัวช่วยจัดรูปข้อความ
+    state/            AppProvider — ศูนย์กลาง state ของแอป ครอบทุกหน้า (คงอยู่ข้ามการเปลี่ยนหน้า)
+    pages/            หน้าตาม route: / (Hub), /dashboard, /model, /about — react-router
+    components/       layout/ (navbar, footer, scroll), Hub/ (แผนที่ตำแหน่ง flare แบบ Canvas + ตาราง), Dashboard/, Model/, ui/
+    lib/              เรียก API, ค่าคงที่ของกราฟ, ตัวช่วยจัดรูปข้อความ, nav.js (section ของ dashboard)
+    styles/           ธีม deep-space: tokens.css (สี/ฟอนต์) + base/chrome/hub/dashboard/model
   Dockerfile        build เป็น nginx image (multi-stage: npm build -> nginx serve)
   nginx.conf        proxy /api, /docs, /openapi.json ไปที่ backend container
 data/               ดาวน์โหลด/ประมวลผลจาก JSOC (อยู่นอก backend/ โดยเจตนา)

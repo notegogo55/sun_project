@@ -102,7 +102,7 @@ export default function FrameCard() {
 
   if (!frames.length) {
     return (
-      <section ref={revealRef} className="card card--frame" aria-labelledby="h-frame" data-reveal>
+      <section ref={revealRef} id="frame" className="card card--frame" aria-labelledby="h-frame" data-reveal>
         <div className="card__head">
           <h2 id="h-frame">Magnetogram &amp; Solar Atmosphere</h2>
           <span className="hint" />
@@ -122,7 +122,7 @@ export default function FrameCard() {
     : "";
 
   return (
-    <section ref={revealRef} className="card card--frame" aria-labelledby="h-frame" data-reveal>
+    <section ref={revealRef} id="frame" className="card card--frame" aria-labelledby="h-frame" data-reveal>
       <div className="card__head">
         <h2 id="h-frame">Magnetogram &amp; Solar Atmosphere</h2>
         <span className="hint">{frameIndex >= 0 ? `เฟรม ${frameIndex + 1} / ${frames.length}` : ""}</span>

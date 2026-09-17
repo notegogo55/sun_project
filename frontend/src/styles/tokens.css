@@ -1,0 +1,84 @@
+/* sunseg — design tokens ธีม "deep space" (แนวเดียวกับ space-weather-monitoring)
+   ตั้งใจเป็น dark-only: magnetogram เป็นภาพโทนเทาที่มีทั้งค่าบวก (ขาว) และลบ (ดำ) และ
+   ramp สีของข้อมูลด้านล่างผ่านการตรวจ contrast/CVD บนพื้นมืดเท่านั้น
+
+   ระบบสีแยกสองชั้น:
+   - --primary*    สีของ chrome (navbar, ขอบ HUD, ปุ่ม, focus) — ไม่ใช้กับ data series
+   - --series-1 / --status-* / --seq-* / --pflux-* สีของข้อมูลจริงในกราฟ (คงค่าเดิมที่ตรวจแล้ว) */
+
+:root {
+  color-scheme: dark;
+
+  /* ── chrome: น้ำเงิน deep-space ─────────────────────────── */
+  --primary:         #3498db;
+  --primary-strong:  #2980b9;
+  --primary-light:   #5dade2;
+  --primary-glow:    rgba(52, 152, 219, 0.35);
+  --primary-wash:    rgba(52, 152, 219, 0.10);
+
+  /* สีดวงอาทิตย์ — ใช้เฉพาะภาพดวงอาทิตย์/จานสุริยะ และเป็นสีหนึ่งของชุด AR */
+  --sun:             #ffb454;
+  --sun-strong:      #e8590c;
+
+  /* ── พื้นผิว ─────────────────────────────────────────────── */
+  --bg-space:        #000000;   /* ฉาก hero ใต้ภาพวงโคจร */
+  --bg-base:         #03060c;   /* พื้นหน้าเว็บ */
+  --bg-surface:      rgba(5, 10, 20, 0.92);
+  --surface-1:       rgba(6, 14, 26, 0.92);   /* การ์ด — ทึบพอไม่ให้ดาวแทรกในพื้นที่กราฟ */
+  --surface-1-solid: #060e1a;                 /* ค่าทึบสำหรับ Plotly (hoverlabel, marker ring) */
+  --surface-2:       #0a1628;
+  --surface-input:   rgba(2, 6, 14, 0.85);
+  --navbar-bg:       rgba(5, 14, 30, 0.92);
+
+  --border:          rgba(52, 152, 219, 0.18);
+  --border-strong:   rgba(52, 152, 219, 0.40);
+  --border-soft:     rgba(255, 255, 255, 0.06);
+
+  --text-primary:    #f8f8ff;
+  --text-secondary:  #a0b4cc;
+  --text-muted:      #7189a8;   /* สว่างกว่าต้นแบบ (#526A8A) ให้ผ่าน 4.5:1 บนพื้นการ์ด */
+  --text-accent:     #5dade2;
+  --gridline:        #12213a;
+  --baseline:        #274064;
+
+  /* ── data (ไม่เปลี่ยนตามธีม) ────────────────────────────── */
+  --series-1:        #3987e5;
+  --series-1-wash:   rgba(57, 135, 229, 0.16);
+
+  --status-good:      #0ca30c;
+  --status-warning:   #fab219;
+  --status-serious:   #ec835a;
+  --status-critical:  #d03b3b;
+  --status-idle:      #606075;
+
+  /* ความรุนแรง GOES class B<C<M<X — "สว่างขึ้น = แรงขึ้น" */
+  --seq-1: #93500f;
+  --seq-2: #cc7016;
+  --seq-3: #f5992e;
+  --seq-4: #ffd699;
+
+  --aia-171:  #f5b942;
+  --aia-304:  #ff6b4a;
+  --aia-1600: #c9cf7a;
+
+  /* ช่องพลังงานโปรตอน >1 < >10 < >50 < >100 MeV */
+  --pflux-1: #256abf;
+  --pflux-2: #5598e7;
+  --pflux-3: #9ec5f4;
+  --pflux-4: #cde2fb;
+
+  /* ── ตัวอักษร ────────────────────────────────────────────── */
+  --font-display: "Orbitron", "IBM Plex Sans Thai", "Segoe UI", sans-serif;
+  --font-sans:    "Rajdhani", "IBM Plex Sans Thai", "Segoe UI", system-ui, sans-serif;
+  --font-mono:    "Share Tech Mono", "IBM Plex Sans Thai", Consolas, ui-monospace, monospace;
+
+  /* ── จังหวะ ──────────────────────────────────────────────── */
+  --navbar-h: 60px;
+  --radius:   2px;
+  --gap:      18px;
+  --touch:    44px;
+  --gutter:   clamp(16px, 4vw, 40px);
+  --shell:    min(1640px, 100%);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 20px rgba(52, 152, 219, 0.20);
+}

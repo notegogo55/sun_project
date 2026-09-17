@@ -28,6 +28,7 @@ export const api = {
     return fetchJson(`/api/proton?${query}`);
   },
   frames: () => fetchJson("/api/frames?limit=5000"),
+  flarePositions: () => fetchJson("/api/flare-positions"),
   segment: (timestamp, useGroundTruth, layer) =>
     fetchJson(`/api/segment?timestamp=${timestamp}&use_ground_truth=${useGroundTruth}&layer=${layer}`),
   intensitySeries: (start, end, useGroundTruth) =>

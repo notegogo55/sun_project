@@ -11,8 +11,8 @@
     # ดึงเต็มช่วงตามที่กำหนดใน configs/data.yaml
     python backend/scripts/download_metadata.py
 
-    # เพิ่มหน้าต่าง case study เข้าไปในไฟล์เดิม (ไม่เขียนทับชุดเทรน)
-    python backend/scripts/download_metadata.py --case-study
+    # ต่อข้อมูลช่วงใหม่เข้ากับไฟล์เดิมแทนการเขียนทับ
+    python backend/scripts/download_metadata.py --start 2018-01-01 --end 2021-12-31 --append
 
 ผลลัพธ์ทั้งหมดถูก cache เป็นก้อนย่อย รันซ้ำจะทำต่อจากที่ค้างไว้
 """
@@ -52,9 +52,9 @@ def _write_parquet(
 ) -> pd.DataFrame:
     """เขียน parquet แบบ atomic และรวมกับไฟล์เดิมได้ตามต้องการ
 
-    การรวมจำเป็นสำหรับโหมด case study: ช่วง 2024-05 ต้องอยู่ในไฟล์เดียวกับชุดเทรน
-    2011-2017 เพราะ build_sequences.py และ splits.py อ่านไฟล์เดียว การเขียนทับตรงๆ
-    จะทำให้ข้อมูลหลายปีที่ใช้เวลาดาวน์โหลดเป็นชั่วโมงหายไปโดยไม่มีคำเตือน
+    การรวมจำเป็นเวลาต่อข้อมูลช่วงใหม่เข้ากับของเดิม: build_sequences.py และ splits.py
+    อ่านไฟล์เดียว การเขียนทับตรงๆ จะทำให้ข้อมูลหลายปีที่ใช้เวลาดาวน์โหลดเป็นชั่วโมง
+    หายไปโดยไม่มีคำเตือน
 
     คืนค่า DataFrame หลังรวมแล้ว เพื่อให้ผู้เรียกรายงานตัวเลขที่ตรงกับไฟล์จริง
     """
@@ -89,11 +89,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--skip-sharp", action="store_true", help="ข้ามการดึง SHARP keywords")
     p.add_argument("--skip-flares", action="store_true", help="ข้ามการดึง flare catalog")
     p.add_argument(
-        "--case-study",
-        action="store_true",
-        help="ใช้หน้าต่าง case_study จาก config แทน time_range (เปิด --append ให้อัตโนมัติ)",
-    )
-    p.add_argument(
         "--hek-chunk-days",
         type=int,
         help="ทับขนาด chunk ของ HEK (ลดลงถ้าเจอช่วงที่ flare ถี่มากจนได้ตารางเปล่า)",
@@ -124,11 +119,9 @@ def main() -> int:
 
     setup_logging(log_file=cfg.paths.artifacts / "logs" / "download_metadata.log")
 
-    window = cfg.case_study if args.case_study else cfg.time_range
-    start = args.start or window.start
-    end = args.end or window.end
-    # case study ต้อง append เสมอ มิฉะนั้น metadata ของชุดเทรนจะถูกเขียนทับ
-    append = args.append or args.case_study
+    start = args.start or cfg.time_range.start
+    end = args.end or cfg.time_range.end
+    append = args.append
     if start >= end:
         logger.error("วันเริ่มต้น (%s) ต้องมาก่อนวันสิ้นสุด (%s)", start, end)
         return 1
@@ -137,11 +130,8 @@ def main() -> int:
     cache = cfg.paths.raw / "cache"
     logger.info("=" * 70)
     logger.info(
-        "ดาวน์โหลด metadata: %s ถึง %s%s%s",
-        start,
-        end,
-        "  [CASE STUDY]" if args.case_study else "",
-        "  [APPEND]" if append else "",
+        "ดาวน์โหลด metadata: %s ถึง %s%s",
+        start, end, "  [APPEND]" if append else "",
     )
     logger.info("=" * 70)
 

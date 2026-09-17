@@ -26,7 +26,8 @@ export default function AttentionCard() {
         y: latest.attention,
         type: "bar",
         marker: {
-          color: latest.attention.map((w) => (w >= peak * 0.92 ? THEME.brand : THEME.series1)),
+          // ชั่วโมงเด่นเป็นส้ม (THEME.sun) ตัดกับแท่งน้ำเงิน — THEME.brand เป็นน้ำเงินไปแล้วในธีมใหม่
+          color: latest.attention.map((w) => (w >= peak * 0.92 ? THEME.sun : THEME.series1)),
         },
         hovertemplate: "%{x} ชม. ก่อนหน้า<br>น้ำหนัก %{y:.3f}<extra></extra>",
       }],
@@ -41,10 +42,10 @@ export default function AttentionCard() {
   }, [latest]);
 
   return (
-    <section ref={revealRef} className="card card--wide" aria-labelledby="h-attn" data-reveal>
+    <section ref={revealRef} id="attention" className="card card--wide" aria-labelledby="h-attn" data-reveal>
       <div className="card__head">
-        <h2 id="h-attn">โมเดลสนใจช่วงเวลาไหน</h2>
-        <span className="hint">น้ำหนัก attention ย้อนหลัง 24 ชม.</span>
+        <h2 id="h-attn">LSTM Attention</h2>
+        <span className="hint">โมเดลสนใจช่วงเวลาไหน · น้ำหนัก attention ย้อนหลัง 24 ชม.</span>
       </div>
       <PlotlyChart
         id="attentionChart"
@@ -57,8 +58,8 @@ export default function AttentionCard() {
       />
 
       <div className="card__head card__head--sub">
-        <h2>SHARP parameters ล่าสุด</h2>
-        <span className="hint">ค่าดิบก่อน normalize</span>
+        <h2>SHARP Parameters</h2>
+        <span className="hint">ค่าล่าสุดแบบดิบ ก่อน normalize</span>
       </div>
       <div id="featureList" className="feature-grid">
         {!latest?.features ? (

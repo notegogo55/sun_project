@@ -1,0 +1,92 @@
+# นิยามชุด feature ของแต่ละ "แบบ" ในงานเปรียบเทียบชุด feature (ticket 06 ของ
+# .scratch/lstm-feature-ablation/spec.md) — แก้ไฟล์นี้เพื่อเพิ่ม/ปรับแบบได้เลย ไม่ต้องแก้
+# โค้ดหรือสร้าง dataset ใหม่ (คอลัมน์ที่ระบุต้องมีอยู่ใน feature_names ของ
+# data/processed/study_sequences/norm_stats.npz ที่ build_study_dataset.py สร้างไว้แล้ว)
+#
+# เลือกคอลัมน์ด้วย sunseg.data.study_dataset.select_columns(feature_names, columns)
+
+sharp_columns: &sharp
+  - TOTUSJH
+  - TOTPOT
+  - TOTUSJZ
+  - ABSNJZH
+  - SAVNCPP
+  - USFLUX
+  - AREA_ACR
+  - MEANPOT
+  - R_VALUE
+  - SHRGT45
+  - MEANSHR
+  - MEANGAM
+  - MEANGBT
+  - MEANGBZ
+  - MEANGBH
+  - MEANJZH
+  - MEANJZD
+  - MEANALP
+
+# p95 ต่อช่อง (แทน median — ทดลอง 2026-09-14) — หนึ่งช่องต่อหนึ่งชั้นบรรยากาศ: 4500=โฟโตสเฟียร์,
+# 304=โครโมสเฟียร์, 171=โคโรนา — dataset เก็บครบ 15 ค่า (5 สถิติ x 3 ช่อง) แต่ใช้จริงแค่
+# ที่ระบุตรงนี้
+#
+# **ทำไม p95 ไม่ใช่ median** — flare เกิดจาก reconnection ที่จุดเฉพาะจุดในดวง (ribbon, hot
+# loop-top) ไม่ใช่ความสว่างเฉลี่ยทั้งดวง median คือค่ากลางของทั้งพื้นที่ AR ซึ่งส่วนใหญ่เป็น
+# บริเวณเงียบ สัญญาณจากจุดร้อนเฉพาะจุดจึงถูกเจือจางจนจมหาย — รอบที่แล้วซึ่งใช้ median ล้วน
+# (V1) แย่กว่า SHARP-only อย่างมีนัยสำคัญ (ΔTSS -0.023 ± 0.003) อาจเป็นเพราะเลือกสถิติผิด
+# ไม่ใช่เพราะ intensity ไม่มีประโยชน์จริง — p95 (max แบบทนต่อ noise ของ pixel เดี่ยว เพราะ
+# max ดิบไม่เสถียรพอ) ควรจับสัญญาณจากจุดร้อนที่สุดของ AR ได้ตรงกว่า
+#
+# ผลชุดก่อนหน้า (median, 4500) เก็บไว้ที่ artifacts/other_results/superseded/ — ดูวันที่ในชื่อไฟล์
+intensity_columns: &intensity
+  - 4500_p95
+  - 304_p95
+  - 171_p95
+
+# มัธยฐานของฟลักซ์ log10 ต่อ timestep (ดูเหตุผลใน spec หัวข้อ 'นิยามของ "1 X-ray flux"')
+xray_columns: &xray
+  - xray_log10_median
+
+variants:
+  V0:
+    label: "18 SHARP (control)"
+    role: >-
+      control — ชุดเดียวกับโมเดลที่ระบบใช้ผลิตอยู่ ทุกข้อสรุปอ้างอิงจากตัวนี้
+    columns: *sharp
+
+  V1:
+    label: "18 SHARP + intensity"
+    role: "intensity เพิ่มอะไรจากสนามแม่เหล็ก"
+    columns:
+      - *sharp
+      - *intensity
+
+  V2:
+    label: "18 SHARP + X-ray"
+    role: >-
+      X-ray เพิ่มอะไรจากสนามแม่เหล็ก (เทียบ V0) — เพิ่มหลังเห็นผลรอบ 25 seed ของ V0-V4 เดิม
+      จึงเป็นการสำรวจ ไม่ใช่สิ่งที่ spec กำหนดไว้ก่อน
+    columns:
+      - *sharp
+      - *xray
+
+  V3:
+    label: "18 SHARP + intensity + X-ray"
+    role: "ทุกอย่างรวมกัน — เพดานของชุดข้อมูลนี้ และ intensity เพิ่มอะไรเมื่อมี X-ray แล้ว (เทียบ V2)"
+    columns:
+      - *sharp
+      - *intensity
+      - *xray
+
+  V4:
+    label: "intensity + X-ray"
+    role: "ทำนายได้แค่ไหนโดยไม่ใช้ SHARP เลย"
+    columns:
+      - *intensity
+      - *xray
+
+  V5:
+    label: "X-ray"
+    role: >-
+      baseline ความคึกคักของดวงอาทิตย์ — ไม่ใช่คู่แข่งเท่าเทียม (ค่าเดียวกันสำหรับทุก AR
+      ณ เวลาเดียวกัน ดูเหตุผลเต็มใน spec หัวข้อ "X-ray เป็นค่าทั้งดวง")
+    columns: *xray

@@ -137,9 +137,9 @@ export default function ProtonCard() {
   if (!health?.proton_flux) return null;
 
   return (
-    <section ref={revealRef} className="card card--wide" aria-labelledby="h-proton" id="protonCard" data-reveal>
+    <section ref={revealRef} className="card card--wide" aria-labelledby="h-proton" id="proton" data-reveal>
       <div className="card__head">
-        <h2 id="h-proton">Proton flux รอบเวลาที่เกิด flare</h2>
+        <h2 id="h-proton" title="ฟลักซ์โปรตอนรอบเวลาที่เกิด flare">Proton Flux · Flare Window</h2>
         <span className="hint" id="protonHint">ชี้เมาส์ที่จุด flare บนจานสุริยะหรือบนเส้น X-ray เพื่อดูตัวอย่าง · คลิกเพื่อตรึงไว้</span>
       </div>
       <p className="proton__summary" id="protonSummary">

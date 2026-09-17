@@ -79,10 +79,12 @@ export const EXTRACTION_DOMAINS = [
   [0.040, 0.240],
 ];
 
-/** สีของแต่ละ AR — ใช้ชุดเดียวกันทั้งสามแถว เพื่อให้ตาไล่ AR ดวงเดิมข้ามชั้นได้ */
+/** สีของแต่ละ AR — ใช้ชุดเดียวกันทั้งสามแถว เพื่อให้ตาไล่ AR ดวงเดิมข้ามชั้นได้
+ *  ใช้ THEME.sun (ส้มดวงอาทิตย์) ไม่ใช่ THEME.brand — brand ของธีมใหม่เป็นน้ำเงินแทบเท่ากับ
+ *  series1 สองเส้นจะแยกกันไม่ออก */
 export const AR_COLORS = [
   THEME.series1, THEME.seq[3], THEME.seq[1],
-  THEME.brand, THEME.pflux[2], THEME.statusCritical,
+  THEME.sun, THEME.pflux[2], THEME.statusCritical,
 ];
 
 /** ครึ่งความกว้างของช่วงที่ปุ่ม "กระโดด" ตั้งให้ (วัน)

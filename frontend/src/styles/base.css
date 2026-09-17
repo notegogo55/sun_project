@@ -1,0 +1,311 @@
+/* พื้นฐานร่วมทุกหน้า — reset, ตัวอักษร, utility HUD, ปุ่ม/ช่องกรอก, ตาราง, badge */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  scroll-behavior: smooth;
+  /* navbar ติดหนึบ + แถบกรองของ dashboard ติดหนึบ บังหัวข้อเวลากระโดดไปที่ anchor */
+  scroll-padding-top: calc(var(--navbar-h) + 84px);
+  background: var(--bg-base);
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root { min-height: 100vh; display: flex; flex-direction: column; }
+
+a { color: var(--text-accent); }
+code { font-family: var(--font-mono); }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.hidden { display: none; }
+
+/* ── HUD corner brackets ─────────────────────────────────────
+   มุมสี่ด้านแบบหน้าจอเครื่องมือวัด วาดด้วย gradient 8 ชั้นบน pseudo-element เดียว —
+   ไม่ต้องแทรก div มุมทีละอันแบบต้นแบบ (ใส่คลาส .hud ก็ได้มุมครบ — การ์ด/แผงหลักได้มุมเองอัตโนมัติ) */
+.hud, .card, .panel, .results__block, .pillar { position: relative; }
+.hud::before, .card::before, .panel::before, .results__block::before, .pillar::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  z-index: 2;
+  --c: var(--hud-color, var(--primary));
+  --l: 10px;
+  --t: 2px;
+  background:
+    linear-gradient(var(--c), var(--c)) left top / var(--l) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) left top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--l) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--l) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--l) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--t) var(--l) no-repeat;
+}
+
+/* ── ปุ่ม ───────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: var(--touch);
+  padding: 0 20px;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+}
+.btn:hover { background: var(--primary-light); border-color: var(--primary-light); box-shadow: var(--shadow-glow); }
+.btn[disabled] { opacity: 0.55; cursor: progress; }
+
+/* ปุ่มเส้นขอบ — แบบ "→ VIEW LIVE DATA" ของต้นแบบ */
+.btn--ghost {
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--primary);
+  backdrop-filter: blur(8px);
+  letter-spacing: 3px;
+}
+.btn--ghost:hover { background: var(--primary); color: #04101c; }
+
+.btn--quiet {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-secondary);
+}
+.btn--quiet:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.4); color: var(--text-primary); box-shadow: none; }
+
+.btn--sm { height: 32px; padding: 0 12px; font-size: 11.5px; letter-spacing: 1px; }
+
+.btn--export {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.btn--export:hover { background: var(--primary-wash); border-color: var(--primary); color: var(--primary-light); box-shadow: none; }
+
+.icon-btn {
+  flex: none;
+  width: var(--touch);
+  height: var(--touch);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-input);
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+.icon-btn:hover:not([disabled]) { border-color: var(--primary); color: var(--primary-light); }
+.icon-btn[disabled] { opacity: 0.35; cursor: default; }
+
+.icon-btn--play { font-size: 12px; color: var(--primary-light); border-color: var(--border-strong); background: var(--primary-wash); }
+.icon-btn--play.is-playing { color: #ff9d9d; border-color: var(--status-critical); background: rgba(208, 59, 59, 0.16); }
+
+/* ── ช่องกรอก ───────────────────────────────────────────────── */
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field--grow { flex: 1 1 150px; min-width: 0; }
+.field__label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+}
+
+input[type="date"], input[type="search"], select, .search {
+  width: 100%;
+  height: var(--touch);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-input);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color 150ms ease;
+}
+input[type="date"]:hover, select:hover, .search:hover { border-color: var(--border-strong); }
+input[type="date"] { color-scheme: dark; }
+
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--primary-light);
+  outline-offset: 2px;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--touch);
+  padding: 4px 2px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.switch input { accent-color: var(--primary); width: 17px; height: 17px; cursor: pointer; }
+
+/* ── chip / pill ────────────────────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+.chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.chip b { color: var(--text-primary); font-weight: 400; }
+.chip__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--chip-color, var(--text-muted)); flex: none; }
+.chip[aria-pressed="false"] { opacity: 0.45; }
+.chip[aria-pressed="false"] .chip__dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--chip-color, var(--text-muted)); }
+
+/* badge สถานะ — จุดเรืองแสงกะพริบ + ป้ายตัวพิมพ์ใหญ่ (แบบ StatusBadge ของต้นแบบ) */
+.badge {
+  --tone: var(--status-idle);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  color: var(--tone);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 6px var(--tone);
+  animation: pulse 2s ease-in-out infinite;
+}
+.badge--good     { --tone: #22c55e; }
+.badge--warning  { --tone: var(--status-warning); }
+.badge--serious  { --tone: var(--status-serious); }
+.badge--critical { --tone: #ef4444; }
+.badge--info     { --tone: var(--primary-light); }
+.badge--idle     { --tone: var(--status-idle); }
+.badge--idle::before { animation: none; }
+
+/* ── ตาราง ──────────────────────────────────────────────────── */
+
+.table-wrap { max-height: 336px; overflow-y: auto; }
+.table-wrap--auto { max-height: none; overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0;
+  border-bottom: 1px solid var(--border-strong);
+  background: rgba(4, 10, 20, 0.97);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.sort {
+  width: 100%;
+  padding: 9px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  transition: color 130ms ease;
+}
+.sort:hover { color: var(--text-primary); }
+.num .sort { text-align: right; }
+.sort[data-active] { color: var(--primary-light); }
+.sort[data-active]::after { content: " ↓"; }
+.sort[data-active][data-dir="asc"]::after { content: " ↑"; }
+
+td { padding: 7px 9px; border-bottom: 1px solid var(--gridline); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.strong { color: var(--primary-light); font-weight: 700; }
+
+.empty { color: var(--text-muted); text-align: center; padding: 22px 10px; font-size: 14px; }
+.hint { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+
+/* ── scrollbar ──────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--primary-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+
+/* ── การเผยตัวตอนเลื่อนถึง ──────────────────────────────────── */
+
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 620ms cubic-bezier(0.22, 1, 0.36, 1), transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-reveal].is-visible { opacity: 1; transform: none; }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+@keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes bounce-y { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(8px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  [data-reveal] { opacity: 1; transform: none; }
+}

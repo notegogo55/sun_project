@@ -79,9 +79,9 @@ export default function HarpListCard() {
   }
 
   return (
-    <section ref={revealRef} className="card card--list" aria-labelledby="h-list" data-reveal>
+    <section ref={revealRef} id="harps" className="card card--list" aria-labelledby="h-list" data-reveal>
       <div className="card__head">
-        <h2 id="h-list">Active Region</h2>
+        <h2 id="h-list">Active Regions</h2>
         <label className="switch">
           <input type="checkbox" checked={onlyFlaring} onChange={(e) => setOnlyFlaring(e.target.checked)} />
           <span>เฉพาะที่เคยเกิด flare</span>

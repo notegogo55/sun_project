@@ -285,10 +285,10 @@ export default function ExtractionCard() {
   }
 
   return (
-    <section ref={revealRef} className="card card--extraction" aria-labelledby="h-extraction" data-reveal>
+    <section ref={revealRef} id="extraction" className="card card--extraction" aria-labelledby="h-extraction" data-reveal>
       <div className="card__head">
         <div className="card__head-title">
-          <h2 id="h-extraction">ความเข้มแสง &amp; สนามแม่เหล็กจาก U-Net Mask ราย AR</h2>
+          <h2 id="h-extraction" title="ความเข้มแสงและสนามแม่เหล็กราย active region จาก mask">AR Intensity · U-Net Mask</h2>
           <span className="hint" id="extractionHint" title={data?.note || ""}>{hint}</span>
         </div>
       </div>

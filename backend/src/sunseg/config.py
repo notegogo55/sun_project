@@ -84,16 +84,6 @@ class TimeRange(_Strict):
         return v
 
 
-class CaseStudyConfig(TimeRange):
-    """หน้าต่างประเมินแยกจากชุดเทรน (ดูเหตุผลใน configs/data.yaml)
-
-    มี cadence เป็นของตัวเองเพราะ case study ต้องการความละเอียดตามเวลาสูงกว่า
-    ชุดเทรนมาก — คนละเป้าหมายกัน จึงใช้ค่าเดียวกันไม่ได้
-    """
-
-    cadence_hours: int
-
-
 class SharpConfig(_Strict):
     cadence_hours: int
     require_quality_zero: bool
@@ -161,6 +151,32 @@ class ProtonConfig(_Strict):
         override = os.environ.get("SUNSEG_PROTON_DIR", "").strip()
         path = Path(override) if override else self.root
         return self.model_copy(update={"root": path if path.is_absolute() else root / path})
+
+
+class PositionFlareConfig(_Strict):
+    """แคตตาล็อก flare ของ PositionFlare — แหล่งตำแหน่ง flare บนจานสุริยะของหน้าแรก
+    (ดู ``sunseg/data/flare_positions.py``)
+
+    อยู่นอก repo เหมือน :class:`ProtonConfig` — sunseg อ่านอย่างเดียวตอนรัน
+    ``scripts/build_flare_positions.py`` เท่านั้น ตัวแอปอ่านผลที่สร้างไว้ใน data/processed
+    จึงไม่ต้องเข้าถึง path นี้ตอนรัน ตั้งทับได้ด้วย env ``SUNSEG_POSITION_FLARE_CSV``
+    """
+
+    csv: Path
+    match_tolerance_min: float = 10.0
+
+    @field_validator("match_tolerance_min")
+    @classmethod
+    def _positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("position_flare.match_tolerance_min ต้องมากกว่า 0")
+        return v
+
+    def resolve(self, root: Path) -> PositionFlareConfig:
+        """env ชนะ YAML เสมอ แล้วค่อยแปลง path แบบ relative ให้เป็น absolute"""
+        override = os.environ.get("SUNSEG_POSITION_FLARE_CSV", "").strip()
+        path = Path(override) if override else self.csv
+        return self.model_copy(update={"csv": path if path.is_absolute() else root / path})
 
 
 class AiaChannel(_Strict):
@@ -232,11 +248,11 @@ class DataConfig(_Strict):
     paths: Paths
     jsoc: JsocConfig
     time_range: TimeRange
-    case_study: CaseStudyConfig
     sharp: SharpConfig
     fulldisk: FullDiskConfig
     flare: FlareConfig
     proton: ProtonConfig
+    position_flare: PositionFlareConfig
     aia: AiaConfig
     sequence: SequenceConfig
     split: SplitConfig
@@ -417,6 +433,7 @@ def load_data_config(path: Path | None = None) -> DataConfig:
     # path ใน YAML เขียนแบบ relative เพื่อให้อ่านง่าย แต่โค้ดใช้ absolute เสมอ
     cfg.paths = cfg.paths.resolve(PROJECT_ROOT)
     cfg.proton = cfg.proton.resolve(PROJECT_ROOT)
+    cfg.position_flare = cfg.position_flare.resolve(PROJECT_ROOT)
     cfg.aia = cfg.aia.resolve(PROJECT_ROOT)
     return cfg
 

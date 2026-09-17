@@ -3,8 +3,8 @@
     python backend/scripts/intensity_gate_check.py
 
 รันทั้ง pipeline บนหน้าต่าง พ.ค. 2024 (62 เฟรม @ 12 ชม. — ต้องดาวน์โหลดซ้ำก่อนด้วย
-``python backend/scripts/download_images.py --case-study`` เพื่อให้ได้แผนที่ระบุตัวตน
-ของ HARP ติดมาด้วย ดู ``sunseg.data.build_masks.build_fulldisk_identity_map``)
+``python backend/scripts/download_images.py --start 2024-05-01 --end 2024-05-31 --cadence-hours 12``
+เพื่อให้ได้แผนที่ระบุตัวตนของ HARP ติดมาด้วย ดู ``sunseg.data.build_masks.build_fulldisk_identity_map``)
 
 วัด **เรื่องท่อ** สามข้อที่เป็นเกณฑ์ตัดสิน (ห้ามลงทุนดาวน์โหลด 2011-2017 ถ้าข้อใดข้อหนึ่งไม่ผ่าน):
 
@@ -16,8 +16,8 @@
 ข้อที่สี่ (ความเข้มแสงแยกดวงที่จะปะทุจากดวงที่ไม่ปะทุได้แค่ไหน) เป็นข้อมูลประกอบเท่านั้น
 **ห้ามใช้ตัดสินว่าจะไปต่อหรือไม่** — มันคือสิ่งที่การทดลองทั้งหมดกำลังจะวัด
 
-artifacts เขียนลง ``artifacts/intensity_study/gate_check/`` — path ของงานศึกษาเอง
-ไม่ทับของเดิม
+artifacts เขียนลง ``artifacts/other_results/checks/intensity_study_gate_check/`` — path ของงานศึกษาเอง
+ไม่ทับของเดิม (``extract_intensity.py`` อ่านตารางจากที่เดียวกันนี้เพื่อเทียบความสอดคล้อง)
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from sunseg.tracking.detect import detect_regions  # noqa: E402
 
 logger = logging.getLogger("intensity_gate_check")
 
-STUDY_ROOT_NAME = "intensity_study"
+GATE_CHECK_DIR = Path("other_results") / "checks" / "intensity_study_gate_check"
 
 
 def parse_args() -> argparse.Namespace:
@@ -307,7 +307,7 @@ def signal_preview(intensity_table: pd.DataFrame, flares: pd.DataFrame, horizon_
 def main() -> int:
     args = parse_args()
     cfg = load_data_config()
-    study_dir = cfg.paths.artifacts / STUDY_ROOT_NAME / "gate_check"
+    study_dir = cfg.paths.artifacts / GATE_CHECK_DIR
     setup_logging(log_file=cfg.paths.artifacts / "logs" / "intensity_gate_check.log")
 
     logger.info("=" * 70)

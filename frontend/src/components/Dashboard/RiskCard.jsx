@@ -8,8 +8,13 @@ import { useReveal } from "../../hooks/useReveal.js";
  *  เดียวกันซ้ำ 4 ครั้ง ทำให้แก้ header หรือ reveal ทีต้องแก้ 4 ที่ */
 function RiskShell({ revealRef, children }) {
   return (
-    <section ref={revealRef} className="card card--gauge" aria-labelledby="h-risk" data-reveal>
-      <div className="card__head"><h2 id="h-risk">ความเสี่ยงล่าสุด</h2></div>
+    <section ref={revealRef} id="risk" className="card card--gauge" aria-labelledby="h-risk" data-reveal>
+      <div className="card__head">
+        <div className="card__head-title">
+          <h2 id="h-risk">Flare Risk</h2>
+          <span className="hint">ความเสี่ยงล่าสุดของ active region ที่เลือก</span>
+        </div>
+      </div>
       {children}
     </section>
   );

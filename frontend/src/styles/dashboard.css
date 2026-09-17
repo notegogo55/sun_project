@@ -1,0 +1,304 @@
+/* หน้า DASHBOARD — แถบ preset/กรอง, กริดการ์ด HUD และเนื้อในของแต่ละการ์ด */
+
+/* ── preset เหตุการณ์สำคัญ ──────────────────────────────────── */
+
+.presets-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.presets-bar__label {
+  margin-right: 4px;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+.preset-btn:hover { border-color: var(--primary); color: var(--text-primary); }
+.preset-btn.is-active { border-color: var(--primary); background: var(--primary-wash); color: var(--primary-light); box-shadow: inset 0 -2px 0 var(--primary); }
+.preset-btn__icon { font-size: 13px; }
+
+/* ── แถบกรองเดียวของทั้งหน้า (ติดหนึบใต้ navbar) ─────────────── */
+
+.filterbar {
+  position: sticky;
+  top: var(--navbar-h);
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  background: rgba(4, 9, 18, 0.96);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+.filterbar > .field { width: 170px; }
+.filterbar__note {
+  margin-left: auto;
+  align-self: center;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── กริด 12 คอลัมน์ ────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 20px;
+  padding-top: 20px;
+  align-content: start;
+}
+
+/* หัวกลุ่มในกริด "// 01 IMAGERY" */
+.grid__label {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+.grid__label::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(52, 152, 219, 0.3), transparent); }
+.grid__label span { color: var(--text-muted); letter-spacing: 1px; text-transform: none; font-family: var(--font-sans); font-size: 14px; }
+
+.card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-card);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+.card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-card), var(--shadow-glow); }
+
+.card--wide       { grid-column: span 12; }
+.card--frame      { grid-column: span 6; }
+.card--extraction { grid-column: span 6; }
+.card--gauge      { grid-column: span 5; }
+.card--list       { grid-column: span 7; }
+
+.card--frame, .card--extraction, .card--gauge { display: flex; flex-direction: column; }
+.card--extraction .chart--extraction { flex: 1 1 auto; }
+.card--frame .frame { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
+.card--gauge .risk { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
+
+.card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.card__head--sub { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--gridline); }
+.card__head-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+.card__head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.card__head h2::before { content: ""; width: 4px; height: 12px; background: var(--primary); flex: none; }
+
+/* ── legend ─────────────────────────────────────────────────── */
+
+.legend { display: flex; align-items: center; flex-wrap: wrap; gap: 13px; margin-bottom: 6px; color: var(--text-secondary); font-size: 13px; }
+.legend__item { display: inline-flex; align-items: center; gap: 6px; }
+.legend__note { color: var(--text-muted); }
+.legend__swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.legend__swatch--series   { background: var(--series-1); }
+.legend__swatch--seq-1    { background: var(--seq-1); }
+.legend__swatch--seq-2    { background: var(--seq-2); }
+.legend__swatch--seq-3    { background: var(--seq-3); }
+.legend__swatch--seq-4    { background: var(--seq-4); }
+.legend__swatch--pflux-1  { background: var(--pflux-1); }
+.legend__swatch--pflux-2  { background: var(--pflux-2); }
+.legend__swatch--pflux-3  { background: var(--pflux-3); }
+.legend__swatch--pflux-4  { background: var(--pflux-4); }
+
+.proton__summary { min-height: 21px; margin-bottom: 8px; color: var(--text-secondary); font-size: 14px; }
+.proton__summary b { color: var(--text-primary); font-family: var(--font-mono); font-weight: 400; }
+.proton__summary .proton__sep { padding: 0 5px; color: var(--text-muted); }
+
+/* ── ตัวควบคุมในการ์ด ───────────────────────────────────────── */
+
+.controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+.controls--frame, .controls--extraction { margin-bottom: 12px; }
+.controls--extraction { gap: 10px; }
+.controls--extraction .field { width: 220px; max-width: 100%; }
+
+.layer-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.layer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+.layer-pill:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text-primary); }
+.layer-pill.is-active { border-color: var(--primary); background: var(--primary-wash); color: #fff; box-shadow: inset 0 -2px 0 var(--primary); }
+.layer-pill:disabled { opacity: 0.35; cursor: not-allowed; }
+.layer-pill__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.layer-pill__dot--mag  { background: #8492b0; }
+.layer-pill__dot--1600 { background: var(--aia-1600); }
+.layer-pill__dot--304  { background: var(--aia-304); }
+.layer-pill__dot--171  { background: var(--aia-171); }
+
+/* ── ภาพ magnetogram ────────────────────────────────────────── */
+
+.frame { text-align: center; }
+.frame img {
+  max-width: 100%;
+  max-height: 480px;
+  width: auto;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 34px rgba(52, 152, 219, 0.16);
+  image-rendering: crisp-edges;
+}
+.frame__meta { margin-top: 10px; color: var(--text-secondary); font-size: 14px; }
+
+/* ── กราฟ ───────────────────────────────────────────────────── */
+
+.chart { width: 100%; height: 320px; }
+.chart--short { height: 190px; }
+.chart--extraction { height: 470px; }
+.extraction__caption { margin-top: 6px; text-align: center; }
+.btn--snap { display: flex; margin: 0 auto; }
+
+/* ── เกจความเสี่ยง ───────────────────────────────────────────── */
+
+.risk { padding: 6px 0; text-align: center; }
+.risk__value { font-family: var(--font-display); font-size: clamp(40px, 5vw, 58px); font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.risk__label { margin-top: 6px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 3px; text-transform: uppercase; }
+.risk__meta { margin-top: 12px; color: var(--text-secondary); font-size: 14px; line-height: 1.75; }
+.risk__bar {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  height: 8px;
+  margin: 16px auto 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.risk__fill { height: 100%; transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
+.risk__threshold { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text-primary); opacity: 0.85; }
+
+.risk--low      .risk__value, .risk--low      .risk__label { color: var(--status-good); }
+.risk--moderate .risk__value, .risk--moderate .risk__label { color: var(--status-warning); }
+.risk--elevated .risk__value, .risk--elevated .risk__label { color: var(--status-serious); }
+.risk--high     .risk__value, .risk--high     .risk__label { color: var(--status-critical); }
+.risk--low      .risk__value { text-shadow: 0 0 26px rgba(12, 163, 12, 0.45); }
+.risk--moderate .risk__value { text-shadow: 0 0 26px rgba(250, 178, 25, 0.45); }
+.risk--elevated .risk__value { text-shadow: 0 0 26px rgba(236, 131, 90, 0.45); }
+.risk--high     .risk__value { text-shadow: 0 0 28px rgba(208, 59, 59, 0.55); }
+.risk--low      .risk__fill { background: var(--status-good); }
+.risk--moderate .risk__fill { background: var(--status-warning); }
+.risk--elevated .risk__fill { background: var(--status-serious); }
+.risk--high     .risk__fill { background: var(--status-critical); }
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  min-height: 28px;
+  margin-top: 12px;
+  padding: 5px 13px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.outcome--yes { border: 1px solid rgba(208, 59, 59, 0.45); background: rgba(92, 43, 46, 0.45); color: #ff9d9d; }
+.outcome--no  { border: 1px solid rgba(12, 163, 12, 0.40); background: rgba(35, 74, 47, 0.40); color: #7fe08c; }
+
+/* ── ตาราง active region ─────────────────────────────────────── */
+
+.search { margin-bottom: 10px; }
+.harp-table tbody tr { cursor: pointer; transition: background 120ms ease; }
+.harp-table tbody tr:hover { background: rgba(52, 152, 219, 0.10); }
+.harp-table tbody tr.selected { background: linear-gradient(90deg, rgba(52, 152, 219, 0.20), rgba(52, 152, 219, 0.03)); box-shadow: inset 3px 0 0 var(--primary); }
+.harp-table td { padding: 11px 9px; font-family: var(--font-mono); font-size: 13.5px; }
+.harp-table tbody tr:focus-visible { outline: 2px solid var(--primary-light); outline-offset: -2px; }
+.flare-count { color: var(--sun); }
+#harpCount { margin-top: 8px; text-align: right; font-family: var(--font-mono); }
+
+/* ── SHARP parameters ───────────────────────────────────────── */
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--gridline);
+  background: var(--gridline);
+}
+.feature { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 12px; background: rgba(4, 10, 20, 0.92); }
+.feature__name { color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.5px; }
+.feature__value { color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.feature-grid > .empty { grid-column: 1 / -1; background: rgba(4, 10, 20, 0.92); }
+
+/* ── responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .card--frame, .card--extraction, .card--gauge, .card--list { grid-column: span 12; }
+}
+
+@media (max-width: 720px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  /* ต้องล้าง span 12 ที่ตั้งไว้ใน media ≤1100px ด้วย — ไม่งั้น grid สร้างคอลัมน์ implicit อีก 11
+     คอลัมน์ให้การ์ดพวกนั้น แล้วกราฟ Plotly ถูกยืดเกินความกว้างจอ */
+  .grid > .card { grid-column: 1 / -1; }
+  .card { padding: 16px; }
+  .filterbar { position: static; }
+  .filterbar > .field { flex: 1 1 130px; width: auto; }
+  .filterbar > .btn { flex: 1 1 100%; }
+  .table-wrap { max-height: 46vh; }
+  .chart--extraction { height: 420px; }
+}

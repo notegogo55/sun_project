@@ -3,10 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>sunseg — ติดตาม Active Region และพยากรณ์ Solar Flare</title>
+<meta name="color-scheme" content="dark">
+<title>SUNSEG — Solar Flare Forecasting Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- ชุดฟอนต์ตามธีม space-weather: Orbitron (หัวข้อ/ตัวเลข), Rajdhani (เนื้อความละติน),
+     Share Tech Mono (ป้ายกำกับ) — ทั้งสามไม่มีอักษรไทย จึงวาง IBM Plex Sans Thai เป็นตัวสำรอง
+     ใน font stack ทุกชุด (ดู --font-* ใน styles/tokens.css) browser จะสลับฟอนต์รายตัวอักษรเอง -->
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- โหลด Plotly จาก CDN แทนที่จะ npm install แล้ว bundle เข้าไป — ตัว lib เต็มหนักหลาย MB
      (พล็อตกราฟทุกชนิดที่โปรเจคนี้ไม่ได้ใช้ครึ่งหนึ่ง) และแทบไม่เปลี่ยนเวอร์ชันระหว่างพัฒนา
      ปักเวอร์ชันตรงนี้แทน ทุก component เรียกผ่าน global `window.Plotly` (ดู PlotlyChart.jsx,

@@ -17,6 +17,9 @@ class HealthResponse(BaseModel):
     aia_images: bool = Field(default=False, description="มีภาพ AIA สามชั้นบรรยากาศให้เรียกดูหรือไม่")
     n_frames: int = Field(description="จำนวนเฟรมภาพที่ประมวลผลไว้แล้ว")
     n_aia_frames: int = Field(default=0, description="จำนวนเฟรมที่มีภาพ AIA อย่างน้อยหนึ่งช่อง")
+    flare_positions: bool = Field(
+        default=False, description="มีตำแหน่ง flare จาก PositionFlare ที่จับคู่กับแคตตาล็อกโมเดลแล้วหรือไม่"
+    )
 
 
 class HarpSummary(BaseModel):
@@ -43,6 +46,39 @@ class ForecastPoint(BaseModel):
     lat: float | None = None
     lon: float | None = None
     actual_label: int | None = Field(default=None, description="ผลจริงที่เกิดขึ้น (มีเฉพาะข้อมูลย้อนหลัง)")
+
+
+class FlarePositionsResponse(BaseModel):
+    """flare ทุกดวงระดับ C+ ในแคตตาล็อกของโมเดล พร้อมตำแหน่งที่จับคู่มาจาก PositionFlare
+
+    เป็นแบบ columnar: ทุก list ยาว ``n`` เท่ากัน ตำแหน่งที่ i ของทุก list คือ flare ดวงเดียวกัน
+    (ส่งแบบนี้เล็กกว่า list ของ object หลายเท่า — หน้าแรกโหลดทั้งชุดครั้งเดียว)
+    """
+
+    epoch: str = Field(description="จุดเริ่มของคอลัมน์ t (UTC ไม่มีโซน)")
+    n: int
+    n_matched: int = Field(description="จับคู่กับ PositionFlare ได้กี่ดวง")
+    n_located: int = Field(description="มีพิกัดวางบนแผนที่ได้กี่ดวง")
+    tolerance_min: float = Field(description="เวลาพีคห่างกันได้สูงสุดตอนจับคู่ (นาที)")
+    source: str | None = Field(default=None, description="CSV ของ PositionFlare ที่ใช้สร้าง")
+    built_at: str | None = None
+    t: list[int] = Field(description="เวลาพีค เป็นนาทีนับจาก epoch")
+    start: list[int | None] = Field(description="เวลาเริ่ม เทียบกับพีค (นาที ติดลบ)")
+    end: list[int | None] = Field(description="เวลาสิ้นสุด เทียบกับพีค (นาที)")
+    goes_class: list[str] = Field(description="คลาสตามแคตตาล็อกของโมเดล — ตัวที่ใช้ทำ label")
+    peak_flux: list[float]
+    noaa_ar: list[int | None]
+    harpnum: list[int | None] = Field(description="HARP ตัวแทน (เลขน้อยสุดที่แมปได้)")
+    n_harps: list[int]
+    match_dt_min: list[float | None] = Field(description="เวลาพีคของ PositionFlare ลบของโมเดล (นาที)")
+    pf_goes_class: list[str | None] = Field(description="คลาสใน PositionFlare (สเกล science)")
+    lat: list[float | None]
+    lon: list[float | None]
+    pos_source: list[str | None] = Field(description="ที่มาของตำแหน่ง: SWPC > XRS > XRS-HPC > AR")
+    limb: list[bool | None] = Field(description="อยู่ใกล้ขอบจาน — พิกัดคลาดเคลื่อนสูงกว่าปกติ")
+    pf_active_region: list[int | None]
+    satellite: list[str | None]
+    cycle: list[int | None]
 
 
 class ForecastSeriesResponse(BaseModel):

@@ -136,7 +136,7 @@ export default function XrayCard() {
     : "";
 
   return (
-    <section ref={revealRef} className="card card--wide" aria-labelledby="h-xray" data-reveal>
+    <section ref={revealRef} id="xray" className="card card--wide" aria-labelledby="h-xray" data-reveal>
       <div className="card__head">
         <div className="card__head-title">
           <h2 id="h-xray">GOES X-Ray Light Curve</h2>

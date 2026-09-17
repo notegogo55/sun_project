@@ -14,7 +14,8 @@ export const THEME = {
   // จึงมีคู่แฝดแบบทึบไว้ใช้กับ hoverlabel และวงแหวนรอบ marker
   surface1: cssVar("--surface-1-solid"),
   border: cssVar("--border"),
-  brand: cssVar("--brand"),
+  brand: cssVar("--primary"),
+  sun: cssVar("--sun"),
   series1: cssVar("--series-1"),
   series1Wash: cssVar("--series-1-wash"),
   statusCritical: cssVar("--status-critical"),

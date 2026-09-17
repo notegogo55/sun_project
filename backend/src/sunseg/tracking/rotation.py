@@ -144,16 +144,18 @@ def stonyhurst_to_pixel(
 ) -> tuple[np.ndarray, np.ndarray]:
     """แปลงลองจิจูด/ละติจูด Stonyhurst กลับเป็นพิกัดพิกเซล"""
     import astropy.units as u
+    from astropy.coordinates import SkyCoord
     from sunpy.coordinates import HeliographicStonyhurst
 
-    frame = HeliographicStonyhurst(obstime=solar_map.date)
-    coords = frame.realize_frame(
+    # ``world_to_pixel`` ต้องการ high-level object (``SkyCoord``) ไม่ใช่ ``Frame`` เปล่า ๆ
+    # ที่ ``Frame.realize_frame`` คืนมา — ต้องห่อด้วย ``SkyCoord`` อีกชั้น
+    coords = SkyCoord(
         HeliographicStonyhurst(
             lon=np.asarray(lon_deg) * u.deg,
             lat=np.asarray(lat_deg) * u.deg,
             radius=solar_map.rsun_meters,
             obstime=solar_map.date,
-        ).data
+        )
     )
     x_pix, y_pix = solar_map.world_to_pixel(coords)
     return (
