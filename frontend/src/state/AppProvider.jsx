@@ -23,6 +23,10 @@ const DEFAULT_RANGE = { start: "2014-10-18", end: "2014-10-31", minClass: "C1.0"
  *  ExtractionCard เรียก /api/intensity-series แยกกัน แต่ทั้งคู่อ่าน `useTruth` จาก
  *  context เดียวกันเสมอ ทำให้แหล่ง mask (SHARP ground truth vs U-Net) ตรงกันเสมอ
  *  แม้จะเป็นคนละคำขอ
+ *
+ *  โมเดลพยากรณ์ (`forecastModel`) เป็น state ระดับแอปด้วยเหตุผลเดียวกัน — แผงความเสี่ยง,
+ *  attention, ตัวเลขใน hero และ footer ต้องพูดถึงโมเดลตัวเดียวกันเสมอ เริ่มที่โมเดลปริยายของ
+ *  backend (LSTM) หน้าเว็บจึงเหมือนเดิมทุกประการจนกว่าผู้ใช้จะกดสลับ
  */
 export function AppProvider({ children }) {
   const [health, setHealth] = useState(null);
@@ -34,6 +38,14 @@ export function AppProvider({ children }) {
   const [selectedHarp, setSelectedHarp] = useState(null);
   const [risk, setRisk] = useState(idleAsync());
 
+  const [forecastModels, setForecastModels] = useState([]);   // ผล /api/forecast/models
+  const [forecastModel, setForecastModel] = useState(null);    // ชื่อโมเดลที่เลือก (null = ปริยายของ backend)
+
+  // โมเดลหลัก (LSTM + V3 แยกระดับ <M/M/X) — คนละ dataset กับโมเดลรายชั่วโมงข้างบน จึงมี state ของตัวเอง
+  const [classSummary, setClassSummary] = useState(null);      // ผล /api/class-forecast/summary
+  const [classMode, setClassMode] = useState("sensitive");     // จุดทำงาน: sensitive | strict
+  const [classSeries, setClassSeries] = useState(idleAsync()); // คำพยากรณ์ระดับคลาสของ HARP ที่เลือก
+
   const [frames, setFrames] = useState([]);
   const [frameIndex, setFrameIndex] = useState(-1);
   const [layer, setLayer] = useState("mag");
@@ -41,6 +53,11 @@ export function AppProvider({ children }) {
 
   const [extraction, setExtraction] = useState(idleAsync());
   const extractionRequest = useRef(0);
+  // กันผลของคำขอพยากรณ์เก่ามาทับของใหม่ — สลับโมเดล/HARP เร็ว ๆ ทำให้มีหลายคำขอค้างพร้อมกัน
+  const riskRequest = useRef(0);
+  const classRequest = useRef(0);
+  const classModeRef = useRef("sensitive");
+  const classSummaryRef = useRef(null);
 
   const [range, setRange] = useState(DEFAULT_RANGE);
   const [reloading, setReloading] = useState(false);
@@ -71,6 +88,9 @@ export function AppProvider({ children }) {
   pinnedFlareRef.current = pinnedFlare;
   const goesRef = useRef(idleAsync());
   goesRef.current = goes;
+  const forecastModelRef = useRef(null);
+  const selectedHarpRef = useRef(null);
+  selectedHarpRef.current = selectedHarp;
 
   /* ── สถานะระบบ + ตัวเลข config/metrics ───────────────────────── */
 
@@ -86,6 +106,31 @@ export function AppProvider({ children }) {
       }
       if (cancelled) return;
       setHealth(healthData);
+
+      // เลือกโมเดลก่อนยิงคำขอพยากรณ์ใด ๆ — ปริยายของ backend ถ้าพร้อม ไม่งั้นตัวแรกที่พร้อม
+      try {
+        const models = await api.forecastModels();
+        if (cancelled) return;
+        setForecastModels(models);
+        const initial = models.find((m) => m.default && m.available)
+          ?? models.find((m) => m.available)
+          ?? models.find((m) => m.default);
+        if (initial) {
+          forecastModelRef.current = initial.name;
+          setForecastModel(initial.name);
+        }
+      } catch {
+        /* backend รุ่นเก่าไม่มี endpoint นี้ — ปล่อยให้ใช้โมเดลปริยายของ backend */
+      }
+
+      try {
+        const summary = await api.classForecastSummary();
+        if (cancelled) return;
+        classSummaryRef.current = summary;
+        setClassSummary(summary);
+      } catch {
+        /* backend รุ่นเก่าไม่มี endpoint นี้ — การ์ดโมเดลหลักจะแสดงว่ายังไม่พร้อม */
+      }
 
       let harpsData = [];
       if (healthData.sequence_store) {
@@ -133,16 +178,16 @@ export function AppProvider({ children }) {
   const missingSetup = [];
   if (health) {
     if (!health.sequence_store) {
-      missingSetup.push(["python backend/scripts/download_metadata.py", "python backend/scripts/build_sequences.py"]);
+      missingSetup.push(["python backend/scripts/data/download_metadata.py", "python backend/scripts/data/build_sequences.py"]);
     } else if (!health.forecast_model) {
-      missingSetup.push(["python backend/scripts/train_lstm.py"]);
+      missingSetup.push(["python backend/scripts/forecast/train.py --model lstm"]);
     }
     if (!health.segmentation_model && health.n_frames === 0) {
-      missingSetup.push(["python backend/scripts/download_images.py", "python backend/scripts/build_masks.py"]);
+      missingSetup.push(["python backend/scripts/data/download_images.py", "python backend/scripts/build_masks.py"]);
     }
     // แผนที่ตำแหน่ง flare หน้าแรก — ต้องมี flares.parquet ของโมเดลก่อน แล้วค่อยจับคู่กับ PositionFlare
     if (!health.flare_positions) {
-      missingSetup.push(["python backend/scripts/build_flare_positions.py"]);
+      missingSetup.push(["python backend/scripts/data/build_flare_positions.py"]);
     }
   }
 
@@ -154,8 +199,11 @@ export function AppProvider({ children }) {
     // แบบเก็บของเดิม) — ต้นฉบับ (app.js:626-628) ล้างแผงความเสี่ยงเป็น "กำลังคำนวณ…" ทันที
     // ไม่โชว์ตัวเลขของ HARP ก่อนหน้าค้างไว้ระหว่างรอ เพราะเป็นคนละ AR กันเลย ไม่ใช่แค่รีเฟรช
     setRisk(loadingAsync(idleAsync()));
+    loadClassSeriesInternal(harpnum);  // ไม่รอ — คนละ endpoint กับแผงความเสี่ยง ไม่ควรถ่วงการขยับช่วงเวลา
+    const requestId = ++riskRequest.current;
     try {
-      const series = await api.forecast(harpnum);
+      const series = await api.forecast(harpnum, forecastModelRef.current);
+      if (requestId !== riskRequest.current) return;
       setRisk(readyAsync(series));
       if (syncRange && series.times.length) {
         await applyRange({
@@ -164,8 +212,48 @@ export function AppProvider({ children }) {
         });
       }
     } catch (error) {
+      if (requestId !== riskRequest.current) return;
       setRisk(errorAsync(error.message));
     }
+  }
+
+  /** สลับโมเดลพยากรณ์ — คำนวณแผงความเสี่ยงของ HARP เดิมและตัวเลขใน hero ใหม่ด้วยโมเดลที่เลือก
+   *  (ไม่ขยับช่วงเวลา — ผู้ใช้กำลังเทียบโมเดลบน AR/ช่วงเดิม) */
+  async function selectForecastModel(name) {
+    if (name === forecastModelRef.current) return;
+    forecastModelRef.current = name;
+    setForecastModel(name);
+    const harp = selectedHarpRef.current;
+    await Promise.all([
+      harp != null ? selectHarp(harp) : Promise.resolve(),
+      loadHeroRiskInternal(rangeRef.current.end),
+    ]);
+  }
+
+  async function loadClassSeriesInternal(harpnum) {
+    const requestId = ++classRequest.current;
+    if (!classSummaryRef.current?.available) {
+      setClassSeries(idleAsync());
+      return;
+    }
+    setClassSeries(loadingAsync(idleAsync()));
+    try {
+      const series = await api.classForecast(harpnum, classModeRef.current);
+      if (requestId !== classRequest.current) return;
+      setClassSeries(readyAsync(series));
+    } catch (error) {
+      if (requestId !== classRequest.current) return;
+      setClassSeries(errorAsync(error.message));
+    }
+  }
+
+  /** สลับจุดทำงานของโมเดลหลัก (เตือนไว/ระมัดระวัง) — มีผลทั้งการ์ดบน dashboard และตารางในหน้า Model */
+  async function selectClassMode(mode) {
+    if (mode === classModeRef.current) return;
+    classModeRef.current = mode;
+    setClassMode(mode);
+    const harp = selectedHarpRef.current;
+    if (harp != null) await loadClassSeriesInternal(harp);
   }
 
   /* ── ช่วงเวลาที่กรอง (ใช้ร่วมกันทั้งหน้า) ─────────────────────── */
@@ -205,7 +293,7 @@ export function AppProvider({ children }) {
     const currentHealth = healthRef.current;
     if (!currentHealth?.forecast_model || !currentHealth?.sequence_store || !end) return;
     try {
-      const ranked = await api.forecastAt(end);
+      const ranked = await api.forecastAt(end, forecastModelRef.current);
       setHeroTopPoint(ranked[0] ?? null);
     } catch {
       /* ตัวเลขใน hero เป็นข้อมูลเสริม — ล้มเหลวเงียบๆ */
@@ -311,9 +399,14 @@ export function AppProvider({ children }) {
     }
   }
 
+  // ข้อมูลสรุปของโมเดลที่เลือก (label, ผล test, pooling) — null ถ้า backend ยังไม่ตอบ
+  const forecastModelInfo = forecastModels.find((m) => m.name === forecastModel) ?? null;
+
   const value = {
     health, bootError, info, missingSetup,
     harps, harpsError, selectedHarp, risk, selectHarp,
+    forecastModels, forecastModel, forecastModelInfo, selectForecastModel,
+    classSummary, classMode, selectClassMode, classSeries,
     frames, frameIndex, setFrameIndex, layer, setLayer, useTruth, setUseTruth,
     extraction,
     range, reloading, applyRange,

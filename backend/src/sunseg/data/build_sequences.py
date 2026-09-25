@@ -203,6 +203,26 @@ def label_times(
     return (hi > lo).astype(np.uint8)
 
 
+def persistence_times(
+    times: np.ndarray, flare_times: np.ndarray | None, lookback_hours: int
+) -> np.ndarray:
+    """baseline แบบ persistence: ทายว่าจะเกิด ถ้ามี flare ในช่วง ``(t - lookback, t]``
+
+    เป็นภาพสะท้อนของ :func:`label_times` — ใช้ lookup ชุดเดียวกัน (HARP เดียวกัน เกณฑ์ความแรงเดียวกัน)
+    และขอบของช่วงต่อกันพอดี: flare ที่เกิดพอดีเวลา t นับเป็นอดีต (รู้แล้ว ณ เวลาออกพยากรณ์) ไม่ใช่ label
+    """
+    if flare_times is None or len(flare_times) == 0:
+        return np.zeros(len(times), dtype=np.uint8)
+
+    lookback = np.timedelta64(lookback_hours, "h")
+    times = times.astype("datetime64[ns]")
+    flare_times = flare_times.astype("datetime64[ns]")
+
+    lo = np.searchsorted(flare_times, times - lookback, side="right")  # ตัด flare ที่พอดี t - lookback
+    hi = np.searchsorted(flare_times, times, side="right")             # รวม flare ที่พอดี t
+    return (hi > lo).astype(np.uint8)
+
+
 # --------------------------------------------------------------------------- #
 # การสร้าง sequence
 # --------------------------------------------------------------------------- #

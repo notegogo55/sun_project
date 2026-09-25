@@ -12,7 +12,7 @@ function Row({ k, children }) {
 
 /** รายละเอียดของ flare ที่ชี้/ตรึงอยู่ — คลาสหลักคือคลาสในแคตตาล็อกของโมเดล (ตัวที่ทำ label)
  *  ส่วนคลาส/ตำแหน่งจาก PositionFlare แสดงคู่กันพร้อมที่มา ให้เห็นว่าข้อมูลส่วนไหนมาจากไหน
- *  และลิงก์ต่อเข้า dashboard ได้ (HARP ที่จับคู่ไว้มีผลพยากรณ์ของ LSTM ให้ดูต่อ) */
+ *  และลิงก์ต่อเข้า dashboard ได้ (HARP ที่จับคู่ไว้มีผลพยากรณ์ให้ดูต่อ) */
 export default function FlareDetail({ row, pinned, onOpen }) {
   if (!row) {
     return (
@@ -73,7 +73,7 @@ export default function FlareDetail({ row, pinned, onOpen }) {
       <button type="button" className="btn btn--sm fp-detail__open" onClick={() => onOpen(row)}>
         {ev.harpnum ? "เปิด HARP นี้ใน dashboard →" : "ดูช่วงเวลานี้ใน dashboard →"}
       </button>
-      {!ev.harpnum && <p className="fp-detail__note">flare นี้ไม่มีคู่ HARP จึงไม่มีผลพยากรณ์ของ LSTM ให้ดู</p>}
+      {!ev.harpnum && <p className="fp-detail__note">flare นี้ไม่มีคู่ HARP จึงไม่มีผลพยากรณ์ให้ดู</p>}
     </div>
   );
 }

@@ -15,17 +15,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from sunseg.data.build_sequences import label_times
 from sunseg.data.study_dataset import (
+    FLARE_HISTORY_COLUMNS,
+    FLARE_HISTORY_FLOOR_LOG10,
     INTENSITY_COLUMNS,
     XRAY_COLUMNS,
     anchored_grid,
     build_unified_window,
+    flare_history_on_grid,
+    intensity_columns_for,
     load_variant_columns,
     load_variants,
     select_columns,
 )
 
-VARIANTS_PATH = Path(__file__).resolve().parents[1] / "configs" / "study_variants.yaml"
+VARIANTS_PATH = Path(__file__).resolve().parents[1] / "configs" / "study" / "variants.yaml"
 
 GRID_START = pd.Timestamp("2020-01-01 00:00")
 CADENCE_HOURS = 12
@@ -126,6 +131,113 @@ class TestBuildUnifiedWindow:
         assert sorted(meta["HARPNUM"].tolist()) == [100, 100, 300, 300, 300]
 
 
+def _flares(*items: tuple[pd.Timestamp, float]) -> tuple[np.ndarray, np.ndarray]:
+    times = np.array([t.to_datetime64() for t, _ in items], dtype="datetime64[ns]")
+    return times, np.array([flux for _, flux in items], dtype=np.float64)
+
+
+class TestFlareHistoryOnGrid:
+    """ประวัติ flare ราย AR (งาน feature-evidence-cv) — จุดกริด t สรุป flare ที่ peak ใน (t − 12 ชม., t]"""
+
+    def test_no_flares_gives_floor_and_zero_count(self):
+        grid, _ = _grid()
+        out = flare_history_on_grid(np.empty(0), np.empty(0), grid, CADENCE_HOURS)
+        assert out.shape == (N_GRID_POINTS, len(FLARE_HISTORY_COLUMNS))
+        assert (out[:, 0] == FLARE_HISTORY_FLOOR_LOG10).all()
+        assert (out[:, 1] == 0).all()
+
+    def test_each_flare_lands_in_the_slot_that_ends_at_or_after_its_peak(self):
+        grid, _ = _grid()
+        at_t = grid[2]
+        times, fluxes = _flares(
+            (at_t, 2e-6),                                  # peak พอดี t -> ช่องของ t
+            (at_t - pd.Timedelta(hours=11, minutes=59), 5e-5),  # ยังอยู่ใน (t − 12, t]
+            (at_t + pd.Timedelta(minutes=1), 3e-7),        # เลย t ไปแล้ว -> ช่องถัดไป
+        )
+        out = flare_history_on_grid(times, fluxes, grid, CADENCE_HOURS)
+        assert out[2, 0] == pytest.approx(np.log10(5e-5), abs=1e-6)  # ค่าสูงสุดของช่อง
+        assert out[2, 1] == 2                                         # สองตัว >= C1.0
+        assert out[3, 0] == pytest.approx(np.log10(3e-7), abs=1e-6)
+        assert out[3, 1] == 0                                         # B3 ไม่นับเป็น C+
+        assert out[1, 0] == FLARE_HISTORY_FLOOR_LOG10
+
+    def test_flares_outside_the_grid_are_ignored(self):
+        grid, _ = _grid()
+        times, fluxes = _flares(
+            (grid[0] - pd.Timedelta(hours=13), 1e-4),
+            (grid[-1] + pd.Timedelta(minutes=1), 1e-4),
+        )
+        out = flare_history_on_grid(times, fluxes, grid, CADENCE_HOURS)
+        assert (out[:, 0] == FLARE_HISTORY_FLOOR_LOG10).all()
+        assert (out[:, 1] == 0).all()
+
+    def test_history_and_label_never_see_the_same_flare(self):
+        """กัน leakage: flare ที่ feature ณ t เห็น ต้องไม่ทำให้ label ณ t เป็น 1 และกลับกัน"""
+        grid, _ = _grid()
+        t = grid[3]
+        for peak in (t, t + pd.Timedelta(minutes=1), t - pd.Timedelta(hours=1)):
+            times, fluxes = _flares((peak, 1e-4))
+            history_sees = flare_history_on_grid(times, fluxes, grid, CADENCE_HOURS)[3, 1] > 0
+            label = label_times(np.array([t.to_datetime64()]), times, horizon_hours=24)[0] == 1
+            assert history_sees != label, f"peak {peak}: ทั้งสองฝั่งเห็น flare เดียวกัน"
+
+
+class TestExtraColumns:
+    def test_extra_channels_and_history_are_appended_after_xray(self):
+        grid, end = _grid()
+        sharp = _make_sharp([100], grid)
+        intensity = _make_intensity(100, grid, present_idx=list(range(N_GRID_POINTS)))
+        extra = intensity_columns_for(("94",))
+        for column in extra:
+            intensity[column] = 7.0
+        history = {100: _flares((grid[4], 2e-5))}
+
+        x, _, meta, names = build_unified_window(
+            sharp, {}, intensity, _make_xray_bins(grid), GRID_START, end, _cfg(),
+            extra_intensity_channels=("94",), flare_history=history,
+        )
+
+        expected = ["F1", *INTENSITY_COLUMNS, *XRAY_COLUMNS, *extra, *FLARE_HISTORY_COLUMNS]
+        assert names == expected, "คอลัมน์ใหม่ต้องต่อท้าย ไม่งั้น index ของคอลัมน์เดิมเลื่อน"
+        assert (x[:, :, names.index("94_p95")] == 7.0).all()
+        # sample สุดท้าย (issue = grid[5]) มี timestep grid[2..5] — flare ที่ grid[4] อยู่ตำแหน่ง 2
+        last = x[-1, :, names.index("ar_flare_log10max_12h")]
+        assert last[2] == pytest.approx(np.log10(2e-5), abs=1e-6)
+        assert (np.delete(last, 2) == FLARE_HISTORY_FLOOR_LOG10).all()
+        assert meta["issue_time"].iloc[-1] == grid[5]
+
+    def test_missing_extra_channel_drops_the_row_for_everyone(self):
+        grid, end = _grid()
+        sharp = _make_sharp([100], grid)
+        intensity = _make_intensity(100, grid, present_idx=list(range(N_GRID_POINTS)))
+        for column in intensity_columns_for(("94",)):
+            intensity[column] = 1.0
+        intensity.loc[intensity.index[-1], "94_p95"] = np.nan  # ช่องใหม่ขาดที่จุดสุดท้าย
+
+        x, _, _, _ = build_unified_window(
+            sharp, {}, intensity, _make_xray_bins(grid), GRID_START, end, _cfg(),
+            extra_intensity_channels=("94",),
+        )
+        assert len(x) == 2  # หน้าต่างที่มีจุดสุดท้ายหายไป เหมือนตอนช่องเดิมขาด
+
+    def test_old_intensity_table_without_the_new_channel_gives_zero_rows_not_an_error(self):
+        grid, end = _grid()
+        sharp = _make_sharp([100], grid)
+        intensity = _make_intensity(100, grid, present_idx=list(range(N_GRID_POINTS)))
+        x, _, _, _ = build_unified_window(
+            sharp, {}, intensity, _make_xray_bins(grid), GRID_START, end, _cfg(),
+            extra_intensity_channels=("94",),
+        )
+        assert len(x) == 0
+
+    def test_defaults_keep_the_old_layout(self):
+        grid, end = _grid()
+        sharp = _make_sharp([100], grid)
+        intensity = _make_intensity(100, grid, present_idx=list(range(N_GRID_POINTS)))
+        _, _, _, names = build_unified_window(sharp, {}, intensity, _make_xray_bins(grid), GRID_START, end, _cfg())
+        assert names == ["F1", *INTENSITY_COLUMNS, *XRAY_COLUMNS]
+
+
 class TestSelectColumns:
     def test_returns_indices_in_requested_order(self):
         names = ["A", "B", "C"]
@@ -188,7 +300,7 @@ class TestLoadVariants:
 
     def test_variant_columns_are_selectable_against_the_real_feature_order(self):
         """คอลัมน์ที่ variants.yaml ระบุต้องมีอยู่จริงใน feature_names ที่
-        build_study_dataset.py จะสร้าง — เทสต์นี้พังทันทีถ้าพิมพ์ชื่อ keyword ผิดใน YAML
+        study/build_dataset.py จะสร้าง — เทสต์นี้พังทันทีถ้าพิมพ์ชื่อ keyword ผิดใน YAML
         """
         from sunseg.config import load_data_config
 

@@ -28,7 +28,7 @@ def xray_series(
     if not store.available:
         raise HTTPException(
             status_code=503,
-            detail=f"ไม่พบไฟล์ฟลักซ์ X-ray ที่ {store.root} — รัน backend/scripts/download_xray.py ก่อน",
+            detail=f"ไม่พบไฟล์ฟลักซ์ X-ray ที่ {store.root} — รัน backend/scripts/data/download_xray.py ก่อน",
         )
 
     start_dt = parse_iso(start, "start")

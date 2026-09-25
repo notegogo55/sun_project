@@ -1,0 +1,24 @@
+# สถาปัตยกรรมของการเทียบ V3 vs V3 + AIA 94/131 (variants_v3_aia.yaml) — LSTM ค่าเดียวกับไฟล์หลัก
+#
+# LSTM ตัวเดียว ค่า **คัดลอกตรงตัว** จาก block `lstm` ของ configs/study/architectures.yaml (ค้นหาบน V0
+# เมื่อ 2026-09-22) — ไม่ค้นหาใหม่ · แยกไฟล์เพราะ train.py รันเฉพาะแบบที่สถาปัตยกรรมประกาศไว้ และ V3A
+# ไม่อยู่ในรายชื่อของไฟล์หลัก · tests/test_registry.py::TestEvidenceStudyConfig ยืนยันว่าค่าตรงกับไฟล์หลัก
+
+default_variants: [V3, V3A]
+
+architectures:
+  lstm:
+    model:
+      kind: lstm
+      hidden_size: 32
+      num_layers: 1
+      dropout: 0.48500392500755257
+      pooling: last
+    train:
+      lr: 0.0027102898128767237
+      weight_decay: 0.0037122126477891282
+      early_stop_patience: 12
+    loss:
+      focal_alpha: 0.6801825577397586
+      focal_gamma: 1.8924473440526008
+    variants: [V3, V3A]

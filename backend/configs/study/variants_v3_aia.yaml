@@ -1,0 +1,55 @@
+# เทียบ "พระเอก" LSTM + V3 กับ V3 + AIA 94/131 (2026-09-25, ผู้ใช้ขอ) — ผลสำรวจ ไม่ได้ล็อก spec ไว้ก่อน
+#
+# V3 นิยามเหมือน configs/study/variants.yaml ทุกประการ — ใช้กับ pool data/processed/study_sequences_v3aia
+# (split/label เดียวกับ study_sequences ที่ model_comparison ใช้ + คอลัมน์ 94_*/131_* ต่อท้าย)
+# V3 ที่เทรนบน pool นี้ต้องได้ผลตรงกับ model_comparison เป๊ะ ถ้าแถวข้อมูลตรงกัน
+
+sharp_columns: &sharp
+  - TOTUSJH
+  - TOTPOT
+  - TOTUSJZ
+  - ABSNJZH
+  - SAVNCPP
+  - USFLUX
+  - AREA_ACR
+  - MEANPOT
+  - R_VALUE
+  - SHRGT45
+  - MEANSHR
+  - MEANGAM
+  - MEANGBT
+  - MEANGBZ
+  - MEANGBH
+  - MEANJZH
+  - MEANJZD
+  - MEANALP
+
+intensity_columns: &intensity
+  - 4500_p95
+  - 304_p95
+  - 171_p95
+
+xray_columns: &xray
+  - xray_log10_median
+
+hot_intensity_columns: &hot
+  - 94_p95
+  - 131_p95
+
+variants:
+  V3:
+    label: "18 SHARP + intensity + X-ray"
+    role: "พระเอก — เหมือน V3 ใน variants.yaml"
+    columns:
+      - *sharp
+      - *intensity
+      - *xray
+
+  V3A:
+    label: "V3 + AIA 94/131"
+    role: "V3 + โคโรนาร้อน 94/131 Å (p95) — คำถามของผู้ใช้ 2026-09-25"
+    columns:
+      - *sharp
+      - *intensity
+      - *xray
+      - *hot

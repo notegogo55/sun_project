@@ -2,14 +2,16 @@ import { Link } from "react-router-dom";
 import { useApp } from "../../state/AppContext.js";
 
 export default function Footer() {
-  const { info } = useApp();
+  const { info, classSummary, classMode } = useApp();
 
-  const tss = info?.forecast?.metrics?.test?.tss;
+  // ตัวเลขของโมเดลหลัก (LSTM + V3) บน test ในจุดทำงานที่เลือก
+  const mainTest = classSummary?.available ? classSummary.evaluation[classMode].test : null;
   const dice = info?.segmentation?.metrics?.test?.dice;
   const metrics = [
-    ["LSTM test TSS", tss != null ? tss.toFixed(4) : "—"],
+    ["LSTM + V3 test TSS ≥M", mainTest ? mainTest.thresholds.M.tss.toFixed(4) : "—"],
+    ["LSTM + V3 test TSS ≥X", mainTest ? mainTest.thresholds.X.tss.toFixed(4) : "—"],
     ["U-Net test Dice", dice != null ? dice.toFixed(4) : "—"],
-    ["พยากรณ์ล่วงหน้า", info ? `${info.data.horizon_hours} ชม. · ≥ ${info.data.positive_class}` : "—"],
+    ["พยากรณ์ล่วงหน้า", "24 ชม. · ระดับ <M / M / X"],
   ];
 
   return (
@@ -19,7 +21,7 @@ export default function Footer() {
           <h3>About SUNSEG</h3>
           <p>
             ระบบแบ่งส่วน active region จากภาพ magnetogram เต็มดวงของ SDO/HMI ติดตามแต่ละดวงผ่านการหมุน
-            ของดวงอาทิตย์ แล้วพยากรณ์โอกาสเกิด solar flare ระดับ ≥M1.0 ภายใน 24 ชั่วโมงข้างหน้า
+            ของดวงอาทิตย์ แล้วพยากรณ์ระดับของ solar flare (&lt;M / M / X) ภายใน 24 ชั่วโมงข้างหน้าด้วยโมเดลหลัก LSTM + V3
           </p>
         </div>
 

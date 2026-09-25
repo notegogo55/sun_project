@@ -23,9 +23,10 @@ export const DASHBOARD_GROUPS = [
   {
     key: "forecast",
     title: "Forecast",
-    lead: "ผลพยากรณ์ของ LSTM สำหรับ active region ที่เลือก",
+    lead: "ระดับคลาสจากโมเดลหลัก LSTM + V3 และความเสี่ยงรายชั่วโมงของโมเดลที่เลือก สำหรับ active region ที่เลือก",
     items: [
-      { id: "risk", label: "ความเสี่ยงล่าสุด", tag: "LSTM" },
+      { id: "class", label: "ระดับคลาส (โมเดลหลัก)", tag: "CLASS" },
+      { id: "risk", label: "ความเสี่ยงรายชั่วโมง ≥M", tag: "FCST" },
       { id: "harps", label: "รายการ active region", tag: "HARP" },
       { id: "attention", label: "Attention & SHARP", tag: "ATT" },
     ],

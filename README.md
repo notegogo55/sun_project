@@ -6,9 +6,19 @@
 |---|---|---|
 | **Segmentation** | U-Net (PyTorch) | แบ่งส่วน active region จากภาพ magnetogram เต็มดวงของ SDO/HMI |
 | **Tracking** | Hungarian + differential rotation | ติดตาม AR แต่ละดวงข้ามเวลา โดยชดเชยการหมุนของดวงอาทิตย์ |
-| **Forecasting** | LSTM (PyTorch) | ทำนายโอกาสเกิด flare ≥M1.0 ภายใน 24 ชม. จาก SHARP magnetic parameters |
+| **Forecasting (โมเดลหลัก)** | **LSTM + V3** (PyTorch, ensemble 25 seed × 2 ระดับ) | ทำนาย**ระดับคลาส**ของ flare ที่แรงที่สุดใน 24 ชม. ถัดไป — **<M / M / X** — จาก SHARP + ความเข้มแสง AIA + X-ray ทุก 12 ชม. |
+| **Forecasting (รายชั่วโมง)** | LSTM · TCN · Transformer · DA-RNN (PyTorch) | ความเสี่ยง flare ≥M1.0 ภายใน 24 ชม. จาก 18 SHARP ทุก 1 ชม. — สี่สถาปัตยกรรมบนข้อมูลชุดเดียวกัน สลับดูได้ในหน้าเว็บ |
 
-ผลลัพธ์ทั้งหมดแสดงผ่าน **webapp (FastAPI + Plotly.js)**
+**เป้าหมายของงานวิจัย: เปรียบเทียบโมเดลพยากรณ์เพื่อหาตัวที่ให้ผลดีที่สุด** — โมเดลหนึ่งตัวคือคู่
+(สถาปัตยกรรม, ชุด feature) ซึ่งทั้งหมด 16 ตัว (4 สถาปัตยกรรม × 4 ชุด feature) จัดอันดับด้วย TSS เฉลี่ยบน test
+ชุด feature (SHARP ล้วน / + ความเข้มแสง AIA / + X-ray / ทั้งหมด) เป็นตัวเลือกหนึ่งของโมเดลเหมือน hyperparameter
+ไม่ใช่คำถามวิจัยแยก (เปลี่ยนจากคำถามเดิม "ข้อมูลหลายความยาวคลื่นช่วยไหม" เมื่อ 2026-09-24 — ผลของคำถามเดิม
+ยังอยู่ในภาคผนวกของรายงานผล)
+
+**โมเดลหลักของโปรเจค (ตั้งแต่ 2026-09-24) คือ LSTM + V3** — อันดับ 1 ของการเปรียบเทียบ ใช้ทำนายระดับคลาส
+<M / M / X (ดูหัวข้อ "โมเดลหลัก" ในผลการทดลอง)
+
+ผลลัพธ์ทั้งหมดแสดงผ่าน **webapp (FastAPI + React)**
 
 ---
 
@@ -47,35 +57,46 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 
 ```powershell
 # 1) ดึงข้อมูล metadata (เร็ว — ไม่กี่สิบ MB): SHARP keywords + flare catalog + ตาราง HARP-NOAA
-python backend/scripts/download_metadata.py
+python backend/scripts/data/download_metadata.py
 
-# 2) สร้าง sequences + labels สำหรับ LSTM
-python backend/scripts/build_sequences.py
+# 2) สร้าง sequences + labels สำหรับโมเดลพยากรณ์ (ทุกตัวใช้ชุดเดียวกัน)
+python backend/scripts/data/build_sequences.py
 
-# 3) เทรน LSTM (ไม่กี่นาที) พร้อมเทียบกับ logistic-regression baseline
-#    เซฟค่าทำนายราย sample ของ val/test ไว้ด้วย (artifacts/metrics/predictions.parquet)
-#    ซึ่งแผง Confusion Matrix ในหน้าเว็บ (ขั้นตอน 7) ต้องใช้ — ดูหัวข้อ "ตัวชี้วัด" ด้านล่าง
-python backend/scripts/train_lstm.py
+# 3) เทรนโมเดลพยากรณ์ พร้อมเทียบกับ logistic-regression baseline ทุกครั้ง
+#    ชื่อโมเดลและ hyperparameter อยู่ที่ backend/configs/forecast.yaml (lstm, tcn, transformer, darnn)
+#    แต่ละตัวเขียนไฟล์ของตัวเอง: artifacts/models/<ชื่อ>.pt, artifacts/metrics/<ชื่อ>.json และ
+#    artifacts/metrics/<ชื่อ>_predictions.parquet (แผง Confusion Matrix ในหน้าเว็บต้องใช้ — ดูหัวข้อ "ตัวชี้วัด")
+python backend/scripts/forecast/train.py --model lstm          # ไม่กี่นาที
+python backend/scripts/forecast/train.py --model all           # ทั้งสี่ตัวเรียงกันทีละตัว (DA-RNN ช้าสุด)
 
 # 4) ดาวน์โหลดภาพ + สร้าง mask สำหรับ U-Net
 #    ต้องมีอีเมล JSOC ใน .env  ·  ทดสอบด้วยไม่กี่เฟรมก่อนเสมอ
-python backend/scripts/download_images.py --start 2014-10-20 --end 2014-10-28 --limit 5
-python backend/scripts/plot_masks.py          # << ตรวจด้วยตาก่อน! (ดูหมายเหตุด้านล่าง)
-python backend/scripts/download_images.py     # แล้วค่อยดึงเต็มช่วง (เร็วขึ้นมาก — ดูหมายเหตุด้านล่าง)
+python backend/scripts/data/download_images.py --start 2014-10-20 --end 2014-10-28 --limit 5
+python backend/scripts/segmentation/plot_masks.py          # << ตรวจด้วยตาก่อน! (ดูหมายเหตุด้านล่าง)
+python backend/scripts/data/download_images.py     # แล้วค่อยดึงเต็มช่วง (เร็วขึ้นมาก — ดูหมายเหตุด้านล่าง)
 
 # 5) เทรน U-Net
-python backend/scripts/train_unet.py --overfit-one-batch   # ตรวจสุขภาพโมเดลก่อน
-python backend/scripts/train_unet.py
+python backend/scripts/segmentation/train.py --overfit-one-batch   # ตรวจสุขภาพโมเดลก่อน
+python backend/scripts/segmentation/train.py
 
 # 6) ดึงภาพ AIA สามชั้นบรรยากาศ (ไม่บังคับ แต่ทำให้หน้าเว็บสลับชั้นได้)
-python backend/scripts/download_aia.py --wcs-only          # ดึง WCS ของเฟรมก่อน (เร็ว)
-python backend/scripts/download_aia.py --limit 5           # ทดสอบไม่กี่เฟรมก่อนเสมอ
-python backend/scripts/plot_aia_alignment.py               # << ตรวจด้วยตาก่อน! (ดูหมายเหตุด้านล่าง)
-python backend/scripts/download_aia.py                     # แล้วค่อยดึงเต็มช่วง (~45 นาที)
+python backend/scripts/data/download_aia.py --wcs-only          # ดึง WCS ของเฟรมก่อน (เร็ว)
+python backend/scripts/data/download_aia.py --limit 5           # ทดสอบไม่กี่เฟรมก่อนเสมอ
+python backend/scripts/checks/plot_aia_alignment.py               # << ตรวจด้วยตาก่อน! (ดูหมายเหตุด้านล่าง)
+python backend/scripts/data/download_aia.py                     # แล้วค่อยดึงเต็มช่วง (~45 นาที)
 
 # 6.5) ตำแหน่ง flare สำหรับแผนที่หน้าแรก — ยืมพิกัดจาก PositionFlare มาแปะให้ flare ของแคตตาล็อกโมเดล
 #      (ต้องมี flares.parquet จากขั้นตอน 1 และ CSV ของ PositionFlare — ดูหัวข้อ "ตำแหน่ง flare" ด้านล่าง)
-python backend/scripts/build_flare_positions.py
+python backend/scripts/data/build_flare_positions.py
+
+# 6.8) โมเดลหลัก LSTM + V3 แยกระดับ <M/M/X (ต้องมีภาพ AIA + X-ray ก่อน — ดู "แหล่งข้อมูล")
+#      ระดับ M: เซลล์ lstm/V3 ของงานเปรียบเทียบ · ระดับ X: เซลล์เดียวกันที่เทรนด้วย label ≥X1.0
+python backend/scripts/study/build_dataset.py
+python backend/scripts/study/train.py
+python backend/scripts/study/build_dataset.py --positive-class X1.0 --out-dir data/processed/study_sequences_x
+python backend/scripts/study/train.py --data-dir data/processed/study_sequences_x --out-dir artifacts/model_comparison_x `
+    --variants V3 --architectures-file <yaml ที่มีแค่ lstm>
+python backend/scripts/study/class_forecast.py   # รายงาน -> artifacts/class_forecast/report.md
 
 # 7) เปิด webapp — backend (FastAPI, backend/app) กับ frontend (React + Vite, frontend/)
 #    เป็นคนละ process/container เสมอ ต้องรันคู่กัน
@@ -114,14 +135,14 @@ cd frontend && npm install && npm run dev            # frontend: http://localhos
 ## เครื่องมือตรวจสอบ
 
 ```powershell
-python backend/scripts/check_env.py           # ไลบรารีครบ, CUDA ใช้ได้, config ถูกต้อง
-python backend/scripts/check_connectivity.py  # เข้าถึง JSOC / NGDC / HEK ได้หรือไม่
-python backend/scripts/inspect_flares.py      # คุณภาพของ label — ดูอัตราการเก็บ flare M+
-python backend/scripts/check_api.py           # ยิง API จริงผ่าน HTTP (ต้องเปิดเซิร์ฟเวอร์ก่อน)
-python backend/scripts/plot_aia_alignment.py  # ภาพ AIA วางทับกริดของเฟรมตรงตำแหน่งหรือไม่
+python backend/scripts/checks/check_env.py           # ไลบรารีครบ, CUDA ใช้ได้, config ถูกต้อง
+python backend/scripts/checks/check_connectivity.py  # เข้าถึง JSOC / NGDC / HEK ได้หรือไม่
+python backend/scripts/checks/inspect_flares.py      # คุณภาพของ label — ดูอัตราการเก็บ flare M+
+python backend/scripts/checks/check_api.py           # ยิง API จริงผ่าน HTTP (ต้องเปิดเซิร์ฟเวอร์ก่อน)
+python backend/scripts/checks/plot_aia_alignment.py  # ภาพ AIA วางทับกริดของเฟรมตรงตำแหน่งหรือไม่
 ```
 
-> **ทำไม LSTM ก่อน U-Net?** LSTM ใช้แค่ข้อมูลตาราง (ไม่กี่ร้อย MB) เทรนเสร็จในไม่กี่นาที
+> **ทำไมโมเดลพยากรณ์ก่อน U-Net?** โมเดลพยากรณ์ใช้แค่ข้อมูลตาราง (ไม่กี่ร้อย MB) เทรนเสร็จในไม่กี่นาที
 > จึงยืนยันได้เร็วว่า labeling pipeline ถูกต้อง ก่อนจะลงทุนหลายชั่วโมงไปกับการดาวน์โหลดภาพ
 
 ## เปิด webapp ด้วย Docker (ไม่ต้องติดตั้ง Python/Node เอง)
@@ -147,11 +168,11 @@ docker compose up --build
 
 | แหล่ง | ใช้ทำอะไร |
 |---|---|
-| JSOC `hmi.sharp_cea_720s` | SHARP magnetic parameters — features ของ LSTM (พิกัด CEA แก้ผลการฉายแล้ว) |
+| JSOC `hmi.sharp_cea_720s` | SHARP magnetic parameters — features ของโมเดลพยากรณ์ (พิกัด CEA แก้ผลการฉายแล้ว) |
 | JSOC `hmi.sharp_720s` | `bitmap` segment — ground-truth mask ของ U-Net (พิกัด CCD ตรงกับภาพเต็มดวง) |
 | JSOC `hmi.M_720s` | ภาพ magnetogram เต็มดวง — input ของ U-Net |
 | [คลัง AIA synoptic](https://jsoc1.stanford.edu/data/aia/synoptic/) | ภาพ AIA 1600/304/171 Å — เลเยอร์ชั้นบรรยากาศในหน้าเว็บ (ดูด้านล่าง) |
-| [NGDC GOES XRS reports](https://www.ngdc.noaa.gov/stp/space-weather/solar-data/solar-features/solar-flares/x-rays/goes/xrs/) | รายการ flare — labels ของ LSTM (ค่าเริ่มต้น, ครอบคลุม 1975–2017) |
+| [NGDC GOES XRS reports](https://www.ngdc.noaa.gov/stp/space-weather/solar-data/solar-features/solar-flares/x-rays/goes/xrs/) | รายการ flare — labels ของโมเดลพยากรณ์ (ค่าเริ่มต้น, ครอบคลุม 1975–2017) |
 | HEK | รายการ flare ทางเลือก (`--flare-source hek`) — ยืดหยุ่นกว่าแต่ช้ากว่ามาก |
 | [ตาราง HARPNUM↔NOAA](http://jsoc.stanford.edu/doc/data/hmi/harpnum_to_noaa/all_harps_with_noaa_ars.txt) | เชื่อม SHARP เข้ากับ flare catalog |
 | คลัง GOES particle ราย 5 นาที (ภายนอก) | ฟลักซ์โปรตอนรอบเวลาที่เกิด flare — แผง "Proton flux" ในหน้าเว็บ (ดูด้านล่าง) |
@@ -160,7 +181,7 @@ docker compose up --build
 
 ### ตำแหน่ง flare บนแผนที่หน้าแรก (PositionFlare)
 
-แผนที่ในหน้าแรกแสดง **flare ชุดเดียวกับที่ LSTM ใช้ทำ label** (`data/interim/flares.parquet`
+แผนที่ในหน้าแรกแสดง **flare ชุดเดียวกับที่โมเดลพยากรณ์ใช้ทำ label** (`data/interim/flares.parquet`
 ระดับ C ขึ้นไป — คลาสและจำนวนดวงตรงกับแคตตาล็อกของโมเดลเป๊ะ) แต่แคตตาล็อกนั้นมีพิกัดแค่ปี ≤ 2017
 (รายงาน NGDC) พิกัดจึงยืมมาจากแคตตาล็อกของโปรเจค PositionFlare (`flares_all_cycles.csv` —
 SWPC > XRS > XRS-HPC > AR, ครอบ 1996-2026) โดย `build_flare_positions.py` จับคู่ทีละดวงด้วย
@@ -195,10 +216,10 @@ magnetogram บอกได้แค่สนามแม่เหล็กท�
 | AIA 171 Å | โคโรนาสงบ (Fe IX) | ~600,000 K |
 
 ```powershell
-python backend/scripts/download_aia.py --wcs-only     # ดึง WCS ของเฟรม (เร็ว ไม่ต้องใช้อีเมล JSOC)
-python backend/scripts/download_aia.py --limit 5      # ทดสอบก่อน
-python backend/scripts/plot_aia_alignment.py          # << ตรวจการจัดตำแหน่ง ห้ามข้าม
-python backend/scripts/download_aia.py                # เต็มช่วง — ~1.2 GB, ราว 45 นาที (6 worker)
+python backend/scripts/data/download_aia.py --wcs-only     # ดึง WCS ของเฟรม (เร็ว ไม่ต้องใช้อีเมล JSOC)
+python backend/scripts/data/download_aia.py --limit 5      # ทดสอบก่อน
+python backend/scripts/checks/plot_aia_alignment.py          # << ตรวจการจัดตำแหน่ง ห้ามข้าม
+python backend/scripts/data/download_aia.py                # เต็มช่วง — ~1.2 GB, ราว 45 นาที (6 worker)
 ```
 
 **ทำไมไม่ใช้คิว export ของ JSOC**: คลัง synoptic ให้ภาพผ่าน HTTP ธรรมดา และภาพในคลังเป็น
@@ -241,10 +262,10 @@ API จะแนบ `note` อธิบายข้อจำกัดของ�
 
 ```powershell
 # ทดสอบด้วยเดือนเดียวก่อน (แนะนำ — ไฟล์เต็มช่วงมีเกือบ 2,600 ไฟล์ ~150 MB)
-python backend/scripts/download_xray.py --start 2014-10-01 --end 2014-10-31
+python backend/scripts/data/download_xray.py --start 2014-10-01 --end 2014-10-31
 
 # ดึงเต็มช่วงตาม time_range ใน configs/data.yaml (ใช้เวลานาน)
-python backend/scripts/download_xray.py
+python backend/scripts/data/download_xray.py
 ```
 
 ไฟล์ถูกเก็บที่ `data/raw/xrs/` รันซ้ำได้ปลอดภัย (ข้ามไฟล์ที่มีอยู่แล้ว) ถ้ายังไม่ได้รันสคริปต์นี้
@@ -273,7 +294,7 @@ flare ระดับ X บางดวงตามมาด้วยพาย�
 จะพลิก label ก็ต่อเมื่อไม่มี flare อื่นคลุมหน้าต่างเดียวกัน และ AR ที่ปะทุมักปะทุหลายครั้งติดกัน
 ตรวจยืนยันได้จาก **positive rate สุดท้าย 1.76% ซึ่งอยู่ในช่วงที่งานวิจัยรายงาน (1–5%)**
 
-ใช้ `python scripts/inspect_flares.py` เพื่อดูตัวเลขนี้กับข้อมูลของคุณเอง
+ใช้ `python backend/scripts/checks/inspect_flares.py` เพื่อดูตัวเลขนี้กับข้อมูลของคุณเอง
 
 ## หลักการสำคัญ: การป้องกัน data leakage
 
@@ -310,7 +331,7 @@ scikit-learn) ซึ่งเรียงคอลัมน์เป็นค่
 | **ทำนาย positive** | TP · *hit* | FP · *false alarm* |
 | **ทำนาย negative** | FN · *miss* | TN · *correct negative* |
 
-สลับดูได้ระหว่าง LSTM กับ logistic baseline — สไลเดอร์รีเซ็ตไปที่ threshold ของโมเดลที่เพิ่งสลับมา
+สลับดูได้ระหว่างโมเดลที่เลือกอยู่ (ปุ่มเลือกโมเดลบนหัวหน้า) กับ logistic baseline — สไลเดอร์รีเซ็ตไปที่ threshold ของโมเดลที่เพิ่งสลับมา
 เสมอ เพราะสองโมเดลมีสเกลความน่าจะเป็นคนละแบบ ห้ามใช้สไลเดอร์ตัวเดียวคุมสองโมเดลพร้อมกัน — และ
 สลับดูได้ระหว่างชุด val กับ test
 
@@ -322,59 +343,109 @@ scikit-learn) ซึ่งเรียงคอลัมน์เป็นค่
 หนึ่งแถวจะเลื่อนขึ้นไปที่ dashboard ด้านบนพร้อมเลือก AR ดวงนั้นและขยับช่วงวันที่ให้ครอบเวลานั้นให้
 อัตโนมัติ (threshold ที่ลากเล่นในแผงนี้เป็นของแผงเองเท่านั้น ไม่กระทบ threshold ที่ dashboard ใช้พยากรณ์จริง)
 
-> **ต้องรันขั้นตอนที่ 3 (`train_lstm.py`) ซ้ำหนึ่งครั้ง** ถึงจะเห็นแผงนี้ — สคริปต์เทรนบันทึกค่าทำนาย
-> ราย sample ของ val/test ไว้ที่ `artifacts/metrics/predictions.parquet` เพิ่มจากไฟล์ตัวชี้วัดเดิม
+> **ต้องรันขั้นตอนที่ 3 (`forecast/train.py --model <ชื่อ>`) ซ้ำหนึ่งครั้ง** ถึงจะเห็นแผงนี้ของโมเดลนั้น — สคริปต์เทรนบันทึกค่าทำนาย
+> ราย sample ของ val/test ไว้ที่ `artifacts/metrics/<ชื่อ>_predictions.parquet` เพิ่มจากไฟล์ตัวชี้วัดเดิม
+> (LSTM ที่เทรนก่อนระบบรองรับหลายโมเดลเขียนไว้ที่ `artifacts/metrics/predictions.parquet` — แอปยังอ่านไฟล์นั้นให้)
 > ถ้ายังไม่มีไฟล์นี้ (เช่น checkout checkpoint เก่าที่เทรนไว้ก่อนหน้านี้มา) แผงจะขึ้นข้อความบอกวิธีแก้
 > แทนตาราง — เป็นพฤติกรรมที่ตั้งใจ ไม่ใช่ bug ส่วนที่เหลือของหน้าเว็บยังเปิดใช้งานได้ตามปกติ
 
 การนับ TP/FP/TN/FN ทั้งหมดทำฝั่ง Python (`sunseg.metrics.threshold_sweep`) ด้วยโค้ดชุดเดียวกับที่
-คำนวณตัวเลขในไฟล์ `lstm.json` — สไลเดอร์บนหน้าเว็บแค่เปิดตารางที่คำนวณไว้ล่วงหน้าตามตำแหน่ง ไม่มี
+คำนวณตัวเลขในไฟล์ `<ชื่อโมเดล>.json` — สไลเดอร์บนหน้าเว็บแค่เปิดตารางที่คำนวณไว้ล่วงหน้าตามตำแหน่ง ไม่มี
 การนับซ้ำฝั่ง JavaScript ตัวเลขในแผงนี้จึงตรงกับไฟล์ตัวชี้วัดเสมอที่ threshold เดียวกัน
 
 ## ผลการทดลอง
 
-ข้อมูล 2011–2025 · 496,120 sample · 4,903 HARP · positive 2.34% · แบ่ง HARP-disjoint
+ข้อมูล production 2011–2025 · 493,174 sample · 4,872 HARP · positive 2.32% · แบ่ง HARP-disjoint
 
 | | n | positive | |
 |---|---|---|---|
-| train | 208,033 | 3,854 (1.85%) | 2011-01 → 2015-06 |
-| val | 26,255 | 408 (1.55%) | 2015-07 → 2016-06 |
-| test | 261,832 | **7,368 (2.81%)** | 2017-03 → 2025-12 |
+| train | 384,838 | 5,382 (1.40%) | 2011-01 → 2023-12 |
+| val | 54,178 | 4,312 (7.96%) | 2024-01 → 2024-12 |
+| test | 54,158 | **1,766 (3.26%)** | 2025-02 → 2025-12 |
 
-### พยากรณ์ flare ≥M1.0 ใน 24 ชม.
+### พยากรณ์ flare ≥M1.0 ใน 24 ชม. (โมเดลในระบบ — seed เดียวต่อโมเดล)
 
-| โมเดล | val TSS | **test TSS** | test AUC | test recall | test precision |
-|---|---|---|---|---|---|
-| LSTM (ประวัติ 24 ชม.) | 0.845 | **0.691** | 0.934 | 0.79 | 0.19 |
-| Logistic regression (ค่า ณ เวลาเดียว) | 0.827 | **0.777** | 0.953 | 0.91 | 0.17 |
+ทั้งสี่ตัวใช้ hyperparameter จากการค้นหาด้วยงบเท่ากัน (`configs/forecast.yaml`, ตั้งแต่ 2026-09-23)
 
-### ข้อค้นพบ: LSTM ไม่ชนะ baseline
+| โมเดล | พารามิเตอร์ | val TSS | **test TSS** | test HSS2 | test BSS | test AUC | test recall | test precision |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| LSTM | 7,265 | 0.796 | **0.756** | 0.262 | −0.019 | 0.939 | 0.891 | 0.182 |
+| TCN | 16,121 | 0.794 | **0.754** | 0.262 | −0.184 | 0.941 | 0.889 | 0.182 |
+| Transformer | 5,481 | 0.805 | **0.745** | 0.245 | −0.135 | 0.940 | 0.891 | 0.170 |
+| DA-RNN | 3,849 | 0.805 | **0.691** | 0.254 | +0.155 | 0.936 | 0.818 | 0.179 |
+| Logistic regression (ค่า ณ เวลาเดียว) | 19 | 0.807 | **0.686** | 0.288 | −1.124 | 0.943 | 0.790 | 0.205 |
 
-**logistic regression ที่ใช้ SHARP parameters ณ เวลาเดียว ยังคงทำได้ดีกว่า LSTM ที่เห็นประวัติ 24 ชั่วโมง**
-นี่คือผลที่วัดได้จริง ไม่ใช่ข้อบกพร่องของการติดตั้ง และสอดคล้องกับงานวิจัยบางส่วนในสาขานี้ ตัวเลขนี้วัดบน
-test set ที่มี positive ถึง 7,368 ตัว (มี.ค. 2017 – ธ.ค. 2025) จึงเชื่อถือได้กว่าตัวเลขจากชุดข้อมูลก่อนหน้า
-ที่มี positive เพียงหลักสิบมาก สาเหตุที่วิเคราะห์ได้:
+ที่มา: `artifacts/metrics/<ชื่อ>.json` · โมเดลลำดับเวลาทั้งสี่ตัวได้ TSS สูงกว่า logistic regression แต่ AUC
+ไม่สูงกว่า — ความสามารถในการจัดอันดับความเสี่ยงใกล้เคียงกัน ผลต่างของ TSS มาจาก threshold และรูปร่างของการ
+กระจายความน่าจะเป็นเป็นหลัก ตารางนี้มี seed เดียวต่อโมเดล (ความผันผวนข้าม seed ของ TSS ราว 0.013–0.032)
+จึง**ใช้จัดอันดับไม่ได้** การจัดอันดับโมเดลอยู่ที่ผลหลักด้านล่าง
 
-1. **effective sample size เล็กกว่าที่เห็นมาก** — sample ที่ห่างกัน 1 ชม. จาก AR ดวงเดียวกันแทบเหมือนกัน
-   จำนวนตัวอย่างที่เป็นอิสระต่อกันจริงคือ **จำนวน HARP ที่เคยเกิด flare ซึ่งมีเพียง 357 ดวง** ไม่ใช่
-   11,630 sample ที่เป็น positive โมเดลที่มีพารามิเตอร์นับแสนจึงจำข้อมูลแทนที่จะเรียนรู้รูปแบบ
-   (ลดจาก 224k → 7k พารามิเตอร์แล้ว test TSS ดีขึ้นอย่างมีนัยสำคัญ แต่ก็ยังแพ้ baseline)
-2. **train กับ test อยู่คนละช่วงของวัฏจักรสุริยะ** — train อยู่ในช่วง solar maximum ของ cycle 24
-   (2011-2015) ส่วน test ครอบคลุมตั้งแต่ขาลงของ cycle 24 ไปจนถึง cycle 25 ทั้งลูก ซึ่งมีพฤติกรรมต่างกัน
+### ผลหลัก: อันดับของโมเดลทั้ง 16 ตัว (4 สถาปัตยกรรม × 4 ชุด feature · 25 seed ต่อตัว)
 
-> การปรับ hyperparameter ต่อโดยดูผลบน test set จะเป็นการ overfit test set เสียเอง จึงหยุดไว้ที่การปรับ
-> ตามเหตุผลเชิงโครงสร้าง 2 ครั้ง แล้วรายงานผลตามจริง
+`artifacts/model_comparison/report.md` (รูป `figures/ranking.png`) — dataset ของงานเปรียบเทียบ (cadence 12 ชม. ·
+8 timestep) · test ปี 2025 3,098 sample (positive 155)
 
-**ข้อควรระวังเพิ่มเติม**: `BSS` ติดลบทั้งสองโมเดล (LSTM −0.28, baseline −1.97) แปลว่า *ค่าความน่าจะเป็นที่
-โมเดลให้มายังไม่ calibrate* — เป็นผลโดยตรงจาก focal loss และ `class_weight="balanced"` ที่จงใจบิดสเกล
-ความน่าจะเป็นเพื่อดัน recall ควรตีความผลลัพธ์เป็น **การจัดอันดับความเสี่ยง** ไม่ใช่ความน่าจะเป็นที่แท้จริง
-(หากต้องการค่าที่ตีความได้ ให้เพิ่มขั้นตอน isotonic/Platt calibration บน validation set)
+| อันดับ | โมเดล | test TSS (mean ± SD) | อันดับบน validation |
+|---:|---|---:|---:|
+| **1** | **LSTM + 18 SHARP + intensity + X-ray (V3)** | **0.747 ± 0.016** | 13 |
+| 2 | LSTM + 18 SHARP + X-ray (V2) | 0.746 ± 0.032 | 9 |
+| 3 | TCN + 18 SHARP + intensity + X-ray (V3) | 0.746 ± 0.016 | 4 |
+| 4 | LSTM + 18 SHARP + intensity (V1) | 0.744 ± 0.013 | 14 |
+| 5 | LSTM + 18 SHARP (V0) | 0.742 ± 0.029 | 8 |
+| … | (ครบ 16 อันดับใน `report.md`) | … | … |
+| 16 | DA-RNN + 18 SHARP + X-ray (V2) | 0.697 ± 0.028 | 6 |
+
+- **โมเดลที่ดีที่สุดคือ LSTM + V3** (TSS 0.747) แต่ **13 จาก 15 ตัวที่เหลือแยกจากอันดับ 1 ไม่ได้** (ห่างไม่เกิน SD
+  ของผลต่างแบบจับคู่ seed) — แยกได้จริงมีแค่ DA-RNN + V3 และ DA-RNN + V2 ทั้ง 16 ตัวอยู่ในช่วง 0.697–0.747
+- **อันดับบน validation กับ test ไม่สอดคล้องกัน** (Spearman ρ = −0.20) — ถ้าเลือกด้วย validation จะได้
+  Transformer + V0 ซึ่งอยู่อันดับ 13 บน test ความต่างระหว่างอันดับต้น ๆ จึงเป็น noise เป็นส่วนใหญ่
+- ดีที่สุดของแต่ละสถาปัตยกรรม: LSTM 0.747 (V3) · TCN 0.746 (V3) · Transformer 0.739 (V1) · DA-RNN 0.728 (V1) ·
+  เฉลี่ยข้ามชุด feature LSTM 0.745 · TCN 0.737 · Transformer 0.729 · DA-RNN 0.718
+- DA-RNN ได้ BSS สูงสุดชัดเจนทุกชุด feature (0.165–0.198) — ถ้าต้องการความน่าจะเป็นที่ calibrate ดีกว่า
+  ไม่ใช่ TSS DA-RNN คือตัวเลือกที่ดีกว่า
+- **เทียบกับ baseline แบบ persistence** (`study/persistence_baseline.py` -> `artifacts/model_comparison/persistence_baseline.md`):
+  persistence คลาสสิก (≥M1.0 ใน 24 ชม. ที่ผ่านมา) ได้ test TSS 0.514 แต่ HSS2 0.527 / precision 0.565 สูงกว่าแบบจำลอง ·
+  ที่อัตราเตือนผิดเท่ากัน แบบจำลองจับได้ไม่มากกว่า (recall 0.513 ± 0.083 vs 0.535) · **กฎ "มี flare ≥C5.0 จากบริเวณ
+  เดียวกันใน 48 ชม. ที่ผ่านมา" ที่เลือกบน validation ได้ test TSS 0.797 · HSS2 0.460 · precision 0.348 ชนะ LSTM + V3
+  ทุก seed** (ตระกูลกฎกำหนดหลังเห็นผลบน test บางส่วน — ดู docstring ของสคริปต์) · ประวัติ flare ของบริเวณนั้นเป็นข้อมูลที่
+  แบบจำลองทั้ง 16 แบบไม่ได้ใช้
+- **แบบจำลองระดับ X**: ใช้เป็นระดับ X ของโมเดลหลัก — ดูหัวข้อถัดไป
+- ภาคผนวก (คำถามเดิม): การเติม intensity/X-ray ให้ผลต่าง −0.028 ถึง +0.016 เทียบกับ 18 SHARP ของสถาปัตยกรรม
+  เดียวกัน ซึ่งเล็กกว่า SD ของตัวเองทุกค่า
+
+**ข้อควรระวังเพิ่มเติม**: `BSS` ของโมเดลส่วนใหญ่ติดลบหรือใกล้ศูนย์ แปลว่า *ค่าความน่าจะเป็นที่โมเดลให้มายังไม่
+calibrate* — เป็นผลโดยตรงจาก focal loss และ `class_weight="balanced"` ที่จงใจบิดสเกลความน่าจะเป็นเพื่อดัน recall
+ควรตีความผลลัพธ์เป็น **การจัดอันดับความเสี่ยง** ไม่ใช่ความน่าจะเป็นที่แท้จริง (หากต้องการค่าที่ตีความได้ ให้เพิ่ม
+ขั้นตอน isotonic/Platt calibration บน validation set)
+
+### โมเดลหลัก: LSTM + V3 แยกระดับคลาส <M / M / X
+
+`artifacts/class_forecast/report.md` (สร้างด้วย `study/class_forecast.py` · ตัวเลขชุดเดียวกับหน้าเว็บ) — สองแบบจำลอง
+ทวิภาคของเซลล์ LSTM + V3 (label ≥M1.0 และ ≥X1.0, 25 seed ต่อระดับ) รวมเป็นระดับเดียว: ระดับที่ทำนาย = ระดับสูงสุดที่
+ensemble (seed เกินครึ่ง) เตือน · **<M = ไม่มีระดับไหนเตือน ไม่ได้แปลว่าจะเกิด C** (ไม่มีแบบจำลอง ≥C1.0)
+
+มีสองจุดทำงานให้สลับบนหน้าเว็บ ต่างกันแค่ระดับ X: **เตือนไว** (threshold ราย seed ที่ให้ TSS สูงสุด) กับ
+**ระมัดระวัง** (ความน่าจะเป็นเฉลี่ย ≥ 0.316 เลือกบน validation ให้ HSS 3 คลาสสูงสุด)
+
+| test (3,098 sample) | เตือนไว | ระมัดระวัง |
+|---|---:|---:|
+| ≥M TSS | 0.744 | 0.748 |
+| ≥X TSS | 0.703 | 0.066 |
+| ≥X จับได้ / precision | 12 จาก 15 / 4% | 1 จาก 15 / 33% |
+| HSS 3 คลาส | 0.187 | 0.303 |
+| ทายระดับถูกเป๊ะ (event ≥M จริง) | 26% | 83% |
+
+- **ระดับ ≥M ใช้ได้จริง แต่ระดับ X แยก X ออกจาก M ได้ไม่ดี** — โหมดเตือนไวเรียก flare ระดับ M จริง 100 จาก 140
+  ว่าเป็น X · โหมดระมัดระวังทายระดับถูกบ่อยแต่แทบไม่เคยเตือน X
+- X ใน test มีแค่ 15 sample จาก 5 HARP — ตัวเลขของระดับ X แกว่งได้มาก
+- persistence ที่เลือกบน validation ให้ TSS สูงกว่าทั้งสองระดับ (≥M 0.797 · ≥X 0.714)
+- การเสนอจุดทำงานที่สองเกิดขึ้นหลังเห็นผลบน test ของโหมดเตือนไว (threshold ของมันเลือกบน validation ล้วน)
 
 ### Segmentation
 
-| โมเดล | ตัวชี้วัด | ผลลัพธ์ |
+| โมเดล | train / val / test (เฟรม) | test Dice / IoU |
 |---|---|---|
-| U-Net | Dice / IoU | **0.916 / 0.855** (test) |
+| U-Net `models/unet.pt` | 6,870 / 691 / 681 | **0.916 / 0.855** |
 
 ## โครงสร้างโปรเจค
 
@@ -384,17 +455,33 @@ runtime data ไม่ใช่โค้ด (mount เป็น volume ใน Do
 
 ```
 backend/
-  configs/          ไฟล์ตั้งค่า YAML (data, unet, lstm, tracking)
+  configs/
+    data.yaml         แหล่งข้อมูล, path, การแบ่ง split
+    unet.yaml         U-Net
+    forecast.yaml     โมเดลพยากรณ์ทั้งสี่ตัว (ค่าร่วม + ค่าเฉพาะรายโมเดล, default_model ของหน้าเว็บ)
+    tracking.yaml     detection + tracker
+    study/            งานเปรียบเทียบ: architectures.yaml (แกนสถาปัตยกรรม), variants*.yaml (แกนชุด feature)
   src/sunseg/
-    config.py       โหลด+validate config ด้วย pydantic
-    data/           ดึงข้อมูลจาก JSOC/HEK, สร้าง dataset, อ่านฟลักซ์โปรตอน GOES
-    datasets/       PyTorch Dataset
-    models/         U-Net, LSTM
-    tracking/       detection, differential rotation, tracker
-    inference/      pipeline รวม 3 ส่วน
-  app/              FastAPI backend — API เท่านั้น ไม่รู้จักไฟล์ frontend เลย
-  scripts/          CLI entrypoints
-  tests/            pytest
+    config.py         โหลด+validate config ด้วย pydantic
+    artifacts.py      ชื่อไฟล์ผลลัพธ์ของแต่ละโมเดล (checkpoint/metrics/predictions) — ฝั่งเทรนกับแอปใช้ร่วมกัน
+    data/             ดึงข้อมูลจาก JSOC/HEK, สร้าง dataset, อ่านฟลักซ์โปรตอน GOES
+    datasets/         PyTorch Dataset (sequence ของ production, study ของงานเปรียบเทียบ, segmentation)
+    models/
+      unet.py         U-Net
+      forecast/       LSTM, TCN, Transformer, DA-RNN + pooling ร่วม + registry (ประกอบจากชื่อ kind)
+    training/         loop เทรนโมเดลพยากรณ์ที่ทุกสคริปต์ใช้ร่วมกัน, losses, utils (seed/scheduler/checkpoint)
+    inference/        ClassForecastService (โมเดลหลัก <M/M/X), ForecastModels (รายชั่วโมง), ค่าทำนายของแผง confusion matrix, segmentation
+    study/            สรุปผลงานเปรียบเทียบ (อันดับโมเดล + Δ แบบจับคู่ seed), ประเมินเวลาต้นทาง
+    tracking/         detection, differential rotation, tracker
+    report_style.py   สไตล์รูปประกอบรายงาน (จานสี, ฟอนต์ไทย)
+  app/                FastAPI backend — API เท่านั้น ไม่รู้จักไฟล์ frontend เลย
+  scripts/
+    data/             ดาวน์โหลด + สร้าง dataset (download_*, build_sequences, build_flare_positions)
+    segmentation/     train.py (U-Net), plot_masks, render_*_video
+    forecast/         train.py --model <ชื่อ|all>, plot_example.py
+    study/            build_dataset, train, tune, class_forecast (รายงานโมเดลหลัก), plot_figures, extract_intensity, ด่านตรวจต่าง ๆ
+    checks/           check_env, check_connectivity, check_api, inspect_flares, plot_aia_alignment
+  tests/              pytest
   pyproject.toml
   Dockerfile        build จาก root ของ repo (ต้องการ README.md นอก backend/)
 frontend/           React + Vite — คนละ container/process จาก backend เสมอ

@@ -6,10 +6,20 @@ import { formatValue } from "../../lib/format.js";
 import { useReveal } from "../../hooks/useReveal.js";
 import PlotlyChart from "../PlotlyChart.jsx";
 
+/** คำอธิบายน้ำหนักตามวิธี pooling ของโมเดล — last/mean ไม่มีน้ำหนักที่เรียนรู้ได้ กราฟจึงแบน/มีแท่งเดียว
+ *  โดยธรรมชาติ ต้องบอกผู้ใช้ ไม่งั้นอ่านผิดว่า "โมเดลสนใจแค่ชั่วโมงล่าสุด" */
+const POOLING_HINT = {
+  attention: "โมเดลสนใจช่วงเวลาไหน · น้ำหนัก attention ย้อนหลัง 24 ชม.",
+  last: "โมเดลนี้ใช้สถานะ ณ ชั่วโมงล่าสุดเท่านั้น (pooling: last) — ไม่มีน้ำหนัก attention ที่เรียนรู้ได้",
+  mean: "โมเดลนี้เฉลี่ยทุกชั่วโมงเท่ากัน (pooling: mean) — ไม่มีน้ำหนัก attention ที่เรียนรู้ได้",
+};
+
 export default function AttentionCard() {
-  const { risk } = useApp();
+  const { risk, forecastModelInfo } = useApp();
   const revealRef = useReveal();
   const latest = risk.data?.latest ?? null;
+  const modelLabel = forecastModelInfo?.label ?? "Model";
+  const hint = POOLING_HINT[forecastModelInfo?.pooling] ?? POOLING_HINT.attention;
 
   const { traces, layout, empty } = useMemo(() => {
     if (!latest?.attention?.length) return { traces: [], layout: null, empty: true };
@@ -44,8 +54,8 @@ export default function AttentionCard() {
   return (
     <section ref={revealRef} id="attention" className="card card--wide" aria-labelledby="h-attn" data-reveal>
       <div className="card__head">
-        <h2 id="h-attn">LSTM Attention</h2>
-        <span className="hint">โมเดลสนใจช่วงเวลาไหน · น้ำหนัก attention ย้อนหลัง 24 ชม.</span>
+        <h2 id="h-attn">{modelLabel} Attention</h2>
+        <span className="hint">{hint}</span>
       </div>
       <PlotlyChart
         id="attentionChart"

@@ -37,7 +37,12 @@ class TestSystemEndpoints:
     def test_info_returns_all_sections(self, client):
         payload = client.get("/api/info").json()
 
-        assert set(payload) == {"forecast", "segmentation", "data"}
+        assert set(payload) == {
+            "forecast", "forecast_models", "default_forecast_model", "segmentation", "data",
+        }
+        # "forecast" คือโมเดลปริยาย (รูปแบบเดิม) ต้องเป็นตัวเดียวกับใน forecast_models
+        assert payload["forecast"]["name"] == payload["default_forecast_model"]
+        assert payload["default_forecast_model"] in payload["forecast_models"]
         assert payload["data"]["horizon_hours"] == 24
         assert payload["data"]["positive_class"] == "M1.0"
 
@@ -94,6 +99,110 @@ class TestValidation:
 
     def test_forecast_requires_harpnum(self, client):
         assert client.get("/api/forecast").status_code == 422
+
+    def test_forecast_rejects_unknown_model(self, client):
+        assert client.get("/api/forecast?harpnum=1&model=gru").status_code == 422
+
+
+class TestClassForecast:
+    """โมเดลหลัก (LSTM + V3) แยกระดับ <M/M/X — ต้องบอกสถานะได้เสมอแม้ยังไม่ได้เทรน"""
+
+    def test_summary_always_answers(self, client):
+        summary = client.get("/api/class-forecast/summary").json()
+
+        assert summary["levels"] == ["<M", "M", "X"]
+        assert summary["modes"] == ["sensitive", "strict"]
+        assert summary["available"] == client.get("/api/health").json()["class_forecast"]
+        if summary["available"]:
+            for mode in summary["modes"]:
+                confusion = summary["evaluation"][mode]["test"]["confusion"]
+                assert sum(map(sum, confusion)) == summary["evaluation"][mode]["test"]["n"]
+        else:
+            assert summary["evaluation"] is None
+            assert "backend/scripts/" in summary["hint"]
+
+    def test_series_without_model_returns_actionable_error(self, client):
+        response = client.get("/api/class-forecast?harpnum=1")
+        if client.get("/api/health").json()["class_forecast"]:
+            assert response.status_code in (200, 404)
+        else:
+            assert response.status_code == 503
+            assert "backend/scripts/" in response.json()["detail"]
+
+    def test_rejects_unknown_mode(self, client):
+        assert client.get("/api/class-forecast?harpnum=1&mode=loose").status_code == 422
+
+    def test_modes_agree_on_level_m(self, client):
+        """สองจุดทำงานต่างกันแค่ระดับ X — ระดับ ≥M ต้องเตือนเหมือนกันทุกแถวที่ระดับ X ไม่ขัดกับระดับ M"""
+        summary = client.get("/api/class-forecast/summary").json()
+        if not summary["available"]:
+            pytest.skip("ยังไม่มีโมเดลหลัก")
+        harp = client.get("/api/class-forecast/at?time=2014-10-24T00:00:00&tolerance_hours=48").json()
+        if not harp:
+            pytest.skip("ไม่มี HARP ในช่วงนั้น")
+        sensitive = client.get(f"/api/class-forecast?harpnum={harp[0]['harpnum']}").json()["points"]
+        strict = client.get(f"/api/class-forecast?harpnum={harp[0]['harpnum']}&mode=strict").json()["points"]
+        for a, b in zip(sensitive, strict, strict=True):
+            assert a["issue_time"] == b["issue_time"]
+            if a["n_alarm_m"] * 2 > summary["n_seeds"]["M"]:
+                assert a["level"] != "<M" and b["level"] != "<M"
+
+
+class TestForecastModels:
+    """โมเดลพยากรณ์หลายตัว — หน้าเว็บสร้างปุ่มเลือกโมเดลจาก /api/forecast/models"""
+
+    def test_lists_every_model_with_one_default(self, client):
+        models = client.get("/api/forecast/models").json()
+
+        assert [m["name"] for m in models] == ["lstm", "tcn", "transformer", "darnn"]
+        assert [m["name"] for m in models if m["default"]] == ["lstm"]
+        for m in models:
+            # ตัวที่ยังไม่ได้เทรนต้องบอกคำสั่งที่ต้องรัน ตัวที่พร้อมต้องมี threshold
+            assert (m["train_hint"] is None) == m["available"]
+            assert (m["threshold"] is not None) == m["available"]
+
+    def test_health_matches_model_list(self, client):
+        health = client.get("/api/health").json()
+        models = client.get("/api/forecast/models").json()
+
+        assert health["forecast_models"] == {m["name"]: m["available"] for m in models}
+        assert health["forecast_model"] == any(m["available"] for m in models)
+        assert health["default_forecast_model"] == "lstm"
+
+    def test_untrained_model_returns_actionable_error(self, client):
+        models = client.get("/api/forecast/models").json()
+        missing = [m for m in models if not m["available"]]
+        if not missing:
+            pytest.skip("เทรนครบทุกโมเดลแล้ว")
+        name = missing[0]["name"]
+
+        response = client.get(f"/api/forecast?harpnum=1&model={name}")
+        assert response.status_code == 503
+        assert f"--model {name}" in response.json()["detail"]
+
+    def test_default_model_matches_explicit_lstm(self, client):
+        """client เดิมที่ไม่ส่ง ?model= ต้องได้ผลเหมือนขอ LSTM ตรง ๆ"""
+        health = client.get("/api/health").json()
+        if not (health["forecast_models"].get("lstm") and health["sequence_store"]):
+            pytest.skip("ยังไม่มี LSTM หรือ sequence store")
+        harpnum = client.get("/api/harps?limit=1").json()[0]["harpnum"]
+
+        implicit = client.get(f"/api/forecast?harpnum={harpnum}&limit=5").json()
+        explicit = client.get(f"/api/forecast?harpnum={harpnum}&limit=5&model=lstm").json()
+        assert implicit == explicit
+        assert implicit["model"] == "lstm"
+
+    @pytest.mark.parametrize("name", ["tcn", "transformer", "darnn"])
+    def test_trained_model_forecasts_the_same_harp(self, client, name):
+        health = client.get("/api/health").json()
+        if not (health["forecast_models"].get(name) and health["sequence_store"]):
+            pytest.skip(f"ยังไม่ได้เทรน {name}")
+        harpnum = client.get("/api/harps?limit=1").json()[0]["harpnum"]
+
+        payload = client.get(f"/api/forecast?harpnum={harpnum}&limit=5&model={name}").json()
+        assert payload["model"] == name
+        assert all(0.0 <= p <= 1.0 for p in payload["probabilities"])
+        assert len(payload["latest"]["attention"]) > 0
 
 
 class TestLayers:
@@ -227,12 +336,12 @@ class TestConfusionMatrix:
         )
 
     def test_counts_at_frozen_threshold_match_metrics_file(self, client):
-        """test ที่สำคัญที่สุดของ ticket นี้ — เทียบจำนวนนับกับไฟล์ที่ train_lstm.py บันทึกไว้
+        """test ที่สำคัญที่สุดของ ticket นี้ — เทียบจำนวนนับกับไฟล์ที่ forecast/train.py บันทึกไว้
         ตรงๆ ทั้งสองโมเดลและทั้งสอง split
         """
         metrics_path = load_data_config().paths.artifacts / "metrics" / "lstm.json"
         if not metrics_path.exists():
-            pytest.skip("ยังไม่มีไฟล์ตัวชี้วัด — รัน train_lstm.py ก่อน")
+            pytest.skip("ยังไม่มีไฟล์ตัวชี้วัด — รัน forecast/train.py ก่อน")
         reference = json.loads(metrics_path.read_text(encoding="utf-8"))
 
         cases = [("lstm", "val"), ("lstm", "test")]

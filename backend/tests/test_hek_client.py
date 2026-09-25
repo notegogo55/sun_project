@@ -17,7 +17,7 @@ import pytest
 from astropy.table import Table
 from astropy.time import Time
 
-from sunseg.data.hek_client import _hek_table_to_frame, _scalar
+from sunseg.data.hek_client import _hek_table_to_frame, _scalar, deduplicate_flares, normalise_noaa_ar
 
 
 class TestScalar:
@@ -91,3 +91,46 @@ class TestHekTableToFrame:
     def test_empty_table_returns_empty_frame(self) -> None:
         assert _hek_table_to_frame(Table()).empty
         assert _hek_table_to_frame(None).empty
+
+
+def _flare(peak: str, ar, frm: str, cls: str = "M3.5") -> dict:
+    t = pd.Timestamp(peak)
+    return {
+        "start_time": t - pd.Timedelta(minutes=10), "peak_time": t, "end_time": t + pd.Timedelta(minutes=10),
+        "goes_class": cls, "peak_flux": 3.5e-5, "noaa_ar": ar, "frm_name": frm,
+    }
+
+
+class TestNoaaArNumbers:
+    """บั๊กจริง (2026-09-23): flare M+ ปี 2022 จับคู่ HARP ได้แค่ 22 จาก 193 ครั้ง เพราะ SWPC ใส่ AR = 0
+    และ SSW Latest Events เขียนเลข 4 หลัก — สองแหล่งรายงาน flare เดียวกัน แต่ไม่มีแหล่งไหนมีเลขที่ใช้ได้"""
+
+    def test_short_number_after_rollover_gets_10000(self) -> None:
+        out = normalise_noaa_ar(pd.DataFrame([_flare("2022-12-16 02:01", 3165, "SSW Latest Events")]))
+        assert out["noaa_ar"].iloc[0] == 13165
+
+    def test_short_number_before_rollover_untouched(self) -> None:
+        out = normalise_noaa_ar(pd.DataFrame([_flare("2001-09-24 10:38", 9632, "SWPC")]))
+        assert out["noaa_ar"].iloc[0] == 9632
+
+    def test_zero_becomes_missing(self) -> None:
+        out = normalise_noaa_ar(pd.DataFrame([_flare("2022-04-02 17:44", 0, "SWPC")]))
+        assert pd.isna(out["noaa_ar"].iloc[0])
+
+    def test_full_number_untouched(self) -> None:
+        out = normalise_noaa_ar(pd.DataFrame([_flare("2024-05-14 17:02", 13664, "SWPC")]))
+        assert out["noaa_ar"].iloc[0] == 13664
+
+    def test_dedup_keeps_the_record_that_has_a_region(self) -> None:
+        """SWPC มีลำดับความน่าเชื่อถือสูงกว่า แต่ AR = 0 ไม่ใช่เลข AR — ต้องเก็บ record ของ SSW"""
+        raw = pd.DataFrame(
+            [_flare("2022-12-16 02:01", 0, "SWPC"), _flare("2022-12-16 02:01", 3165, "SSW Latest Events")]
+        )
+        out = deduplicate_flares(normalise_noaa_ar(raw))
+        assert len(out) == 1
+        assert out["noaa_ar"].iloc[0] == 13165
+
+    def test_dedup_treats_zero_as_no_region_even_without_normalising(self) -> None:
+        raw = pd.DataFrame([_flare("2022-12-16 02:01", 0, "SWPC"), _flare("2022-12-16 02:01", 13165, "SSW Latest Events")])
+        out = deduplicate_flares(raw)
+        assert out["noaa_ar"].iloc[0] == 13165

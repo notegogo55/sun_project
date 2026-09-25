@@ -155,7 +155,7 @@ def match_positions(
 
 
 # --------------------------------------------------------------------------- #
-# ฝั่งแอป — อ่านผลที่ scripts/build_flare_positions.py เขียนไว้
+# ฝั่งแอป — อ่านผลที่ scripts/data/build_flare_positions.py เขียนไว้
 # --------------------------------------------------------------------------- #
 
 #: epoch ของคอลัมน์เวลาใน payload (นาทีนับจากจุดนี้) — ตัวเลขเล็กกว่า ISO string หลายเท่า
@@ -182,7 +182,7 @@ class FlarePositionStore:
 
         if not self.path.exists():
             logger.warning(
-                "ไม่พบตำแหน่ง flare ที่ %s — รัน backend/scripts/build_flare_positions.py", self.path
+                "ไม่พบตำแหน่ง flare ที่ %s — รัน backend/scripts/data/build_flare_positions.py", self.path
             )
             return
         self.frame = pd.read_parquet(self.path)
@@ -204,7 +204,7 @@ class FlarePositionStore:
     def payload(self) -> dict:
         """ข้อมูลทั้งชุดแบบ columnar — ทุก list ยาว ``n`` เท่ากัน สร้างครั้งเดียวแล้วเก็บไว้"""
         if self.frame is None:
-            raise RuntimeError("ยังไม่มีตำแหน่ง flare — รัน backend/scripts/build_flare_positions.py")
+            raise RuntimeError("ยังไม่มีตำแหน่ง flare — รัน backend/scripts/data/build_flare_positions.py")
         if self._payload is not None:
             return self._payload
 

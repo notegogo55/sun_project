@@ -135,7 +135,7 @@ class FrameWcsStore:
         if not self.path.exists():
             logger.warning(
                 "ไม่พบ WCS ของเฟรมที่ %s — การวางภาพ AIA และพิกัดเฮลิโอกราฟิกจะใช้ค่าประมาณ "
-                "(รัน backend/scripts/download_aia.py --wcs-only เพื่อดึงค่าจริง)",
+                "(รัน backend/scripts/data/download_aia.py --wcs-only เพื่อดึงค่าจริง)",
                 self.path,
             )
             return
@@ -223,7 +223,7 @@ def map_from_as_is(path: Path, row: pd.Series):
 
 
 # --------------------------------------------------------------------------- #
-# การดึงข้อมูลมาเติมดัชนี (ใช้จาก scripts/download_aia.py)
+# การดึงข้อมูลมาเติมดัชนี (ใช้จาก scripts/data/download_aia.py)
 # --------------------------------------------------------------------------- #
 
 

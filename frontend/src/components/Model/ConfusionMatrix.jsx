@@ -15,11 +15,19 @@ const CELL_LAYOUT = [
 /** แผงนี้ตรึงอยู่กับ split ของตัวเอง ไม่ขยับตามช่วงเวลาที่เลือกในแถบกรอง (ต่างจากการ์ด
  *  อื่นทั้งหมดในหน้านี้) จึงโหลดใหม่เฉพาะตอนสลับโมเดล/split เท่านั้น — การนับ
  *  TP/FP/TN/FN ทั้งหมดมาจาก backend (sunseg.metrics.threshold_sweep) ฝั่งนี้แค่เปิด
- *  index ตามตำแหน่งสไลเดอร์แล้วคูณ/หารเลขที่ backend นับมาให้แล้ว */
+ *  index ตามตำแหน่งสไลเดอร์แล้วคูณ/หารเลขที่ backend นับมาให้แล้ว
+ *
+ *  โมเดลที่แสดงคือตัวที่เลือกไว้ทั้งแอป (ForecastModelPicker บนหัวหน้า) — ปุ่มในแผงนี้สลับแค่
+ *  ระหว่าง "โมเดลนั้น" กับ logistic baseline ที่เทรนคู่กันเหมือนเดิม */
 export default function ConfusionMatrix() {
-  const { selectHarp, applyRange } = useApp();
+  const { selectHarp, applyRange, forecastModel, forecastModels } = useApp();
   const navigate = useNavigate();
-  const [model, setModel] = useState("lstm");         // "lstm" | "baseline"
+  const [source, setSource] = useState("model");      // "model" | "baseline"
+  // null = ยังไม่รู้รายชื่อโมเดล — ไม่ส่ง ?model= ให้ backend ใช้โมเดลปริยาย (LSTM)
+  const model = source === "baseline" ? "baseline" : (forecastModel ?? "");
+  const labelOf = (name) =>
+    name === "baseline" ? "logistic baseline" : (forecastModels.find((m) => m.name === name)?.label ?? name.toUpperCase());
+  const modelPillLabel = forecastModels.find((m) => m.name === forecastModel)?.label ?? "LSTM";
   const [split, setSplit] = useState("test");          // "val" | "test"
   const [confusion, setConfusion] = useState(idleAsync()); // ผล /api/forecast/confusion-matrix (sweep ทั้งกริด)
   const [index, setIndex] = useState(null);            // ตำแหน่งบนกริดที่สไลเดอร์ชี้อยู่ตอนนี้
@@ -90,7 +98,7 @@ export default function ConfusionMatrix() {
 
   const threshold = cm.thresholds[index];
   const isFrozen = index === cm.frozen_index;
-  const modelLabel = cm.model === "lstm" ? "LSTM" : "logistic baseline";
+  const modelLabel = labelOf(cm.model);
   const signed = (v) => `${v >= 0 ? "+" : ""}${v.toFixed(4)}`;
 
   return (
@@ -99,8 +107,8 @@ export default function ConfusionMatrix() {
         <h3 className="results__title">Confusion Matrix <span>ปรับ threshold ดูการแลกเปลี่ยนระหว่าง hit กับ false alarm ได้ทันที</span></h3>
         <div className="cm__toggles">
           <div className="layer-pills cm__toggle-group" role="radiogroup" aria-label="เลือกโมเดล">
-            <button type="button" className={`layer-pill${model === "lstm" ? " is-active" : ""}`} onClick={() => setModel("lstm")}>LSTM</button>
-            <button type="button" className={`layer-pill${model === "baseline" ? " is-active" : ""}`} onClick={() => setModel("baseline")}>Logistic baseline</button>
+            <button type="button" className={`layer-pill${source === "model" ? " is-active" : ""}`} onClick={() => setSource("model")}>{modelPillLabel}</button>
+            <button type="button" className={`layer-pill${source === "baseline" ? " is-active" : ""}`} onClick={() => setSource("baseline")}>Logistic baseline</button>
           </div>
           <div className="layer-pills cm__toggle-group" role="radiogroup" aria-label="เลือกชุดข้อมูล">
             <button type="button" className={`layer-pill${split === "val" ? " is-active" : ""}`} onClick={() => setSplit("val")}>val</button>

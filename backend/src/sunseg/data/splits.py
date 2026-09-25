@@ -24,7 +24,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from ..config import SplitConfig
+from ..config import CVConfig, SplitConfig
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +56,27 @@ def assign_harp_splits(lifespans: pd.DataFrame, cfg: SplitConfig) -> pd.DataFram
         return lifespans.assign(split=pd.Series(dtype="object"))
 
     gap = timedelta(days=cfg.gap_days)
+    train_start = pd.Timestamp(cfg.train_start) if cfg.train_start else None
     train_end = pd.Timestamp(cfg.train_end) + timedelta(days=1)  # inclusive ถึงสิ้นวัน
     val_end = pd.Timestamp(cfg.val_end) + timedelta(days=1)
+    # inclusive ถึงสิ้นวัน เหมือนกัน — ใช้กับ fold ของ CV เท่านั้น (single split ปล่อยเปิด)
+    test_end = pd.Timestamp(cfg.test_end) + timedelta(days=1) if cfg.test_end else None
 
     out = lifespans.copy()
     t_first = pd.to_datetime(out["t_first"])
     t_last = pd.to_datetime(out["t_last"])
 
     is_train = t_last <= train_end
+    if train_start is not None:
+        # ใช้ตอน rolling/blocked CV เท่านั้น: จำกัดขนาด train ให้คงที่แทนที่จะเอาทุกอย่าง
+        # ก่อน train_end (ซึ่งเป็นพฤติกรรมของ single split — ดู docstring โมดูลนี้)
+        is_train &= t_first >= train_start
     is_val = (t_first >= train_end + gap) & (t_last <= val_end)
     is_test = t_first >= val_end + gap
+    if test_end is not None:
+        # ใช้ตอน CV เท่านั้น: ตัด test ให้จบที่ขอบของ fold แทนที่จะกิน "ทุกอย่างหลังจากนี้"
+        # ไม่งั้น fold ถัดไปจะทับช่วงเวลาเดียวกันซ้ำ
+        is_test &= t_last <= test_end
 
     out["split"] = "drop"
     out.loc[is_train, "split"] = "train"
@@ -105,6 +116,62 @@ def _assert_disjoint(assigned: pd.DataFrame) -> None:
             f"HARP ต่อไปนี้ถูก assign ซ้ำมากกว่าหนึ่ง split: "
             f"{sorted(dupes['HARPNUM'].unique().tolist())}"
         )
+
+
+def rolling_folds(
+    base: SplitConfig, cv: CVConfig, data_start: pd.Timestamp, data_end: pd.Timestamp
+) -> list[SplitConfig]:
+    """สร้างขอบเขต fold ของ rolling/blocked-window cross-validation
+
+    train มีขนาดคงที่ ``cv.train_years`` ปี เลื่อนไปข้างหน้าทีละ ``cv.step_years`` ปีต่อ fold
+    (blocked — ต่างจาก expanding window ที่ train โตขึ้นทุก fold) ตามด้วย val/test คั่นด้วย
+    ``base.gap_days`` เหมือนเดิม fold ที่กิน ``data_end`` เกินจะไม่ถูกสร้าง — ถ้าช่วงข้อมูลสั้น
+    กว่า ``train_years + val_years + test_years`` ปี จะได้ list ว่าง
+
+    คืนค่าเป็น :class:`SplitConfig` หนึ่งชุดต่อ fold (มี ``train_start``/``test_end`` เติมครบ)
+    ใช้กับ :func:`assign_harp_splits` ได้ตรง ๆ — ไม่มี logic กัน leakage เพิ่มเติมที่นี่ เพื่อไม่ให้
+    มีจุดกัน leakage สองจุดที่อาจไม่ตรงกัน
+    """
+    start = pd.Timestamp(cv.anchor) if cv.anchor is not None else pd.Timestamp(data_start)
+    end = pd.Timestamp(data_end)
+
+    folds: list[SplitConfig] = []
+    k = 0
+    while True:
+        offset = pd.DateOffset(years=cv.step_years * k)
+        if cv.expanding:
+            # train เริ่มที่ start เสมอ (train_start=None ให้ assign_harp_splits เอาทุก HARP ที่จบก่อน train_end)
+            train_start = None
+            train_end = start + offset + pd.DateOffset(years=cv.train_years) - pd.Timedelta(days=1)
+        else:
+            train_start = start + offset
+            train_end = train_start + pd.DateOffset(years=cv.train_years) - pd.Timedelta(days=1)
+        val_end = train_end + pd.DateOffset(years=cv.val_years)
+        test_end = val_end + pd.DateOffset(years=cv.test_years)
+        # expanding: fold สุดท้ายเก็บไว้แม้ข้อมูลจบก่อน test_end ไม่เกินหนึ่งเดือน (เช่น issue_time สุดท้าย
+        # 2025-12-31 00:00 กับ test_end 2025-12-31) — blocked: คงเกณฑ์เดิมทุกประการ
+        slack = pd.Timedelta(days=31) if cv.expanding else pd.Timedelta(0)
+        if test_end - end > slack:
+            break
+        folds.append(
+            base.model_copy(
+                update={
+                    "train_start": train_start.date() if train_start is not None else None,
+                    "train_end": train_end.date(),
+                    "val_end": val_end.date(),
+                    "test_end": test_end.date(),
+                    "cv": None,
+                }
+            )
+        )
+        k += 1
+
+    if not folds:
+        logger.warning(
+            "สร้าง fold ไม่ได้เลย: ช่วงข้อมูล %s..%s สั้นกว่า train+val+test = %d ปี",
+            start.date(), end.date(), cv.train_years + cv.val_years + cv.test_years,
+        )
+    return folds
 
 
 def apply_splits(df: pd.DataFrame, assigned: pd.DataFrame) -> pd.DataFrame:

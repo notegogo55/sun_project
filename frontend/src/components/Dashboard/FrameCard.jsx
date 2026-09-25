@@ -109,7 +109,7 @@ export default function FrameCard() {
         </div>
         <div id="framePanel" className="frame">
           <p className="empty">
-            ยังไม่มีเฟรมภาพ — รัน <code>backend/scripts/download_images.py</code> แล้ว <code>backend/scripts/build_masks.py</code>
+            ยังไม่มีเฟรมภาพ — รัน <code>backend/scripts/data/download_images.py</code> แล้ว <code>backend/scripts/build_masks.py</code>
           </p>
         </div>
       </section>

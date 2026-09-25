@@ -14,7 +14,7 @@
 
 .. warning::
    ก่อนเทรน **ต้องตรวจด้วยตา** ว่า mask วางทับ active region ตรงตำแหน่งจริง
-   ใช้ ``python backend/scripts/plot_masks.py`` — ถ้า WCS ผิด mask จะเลื่อนไปทั้งภาพ
+   ใช้ ``python backend/scripts/segmentation/plot_masks.py`` — ถ้า WCS ผิด mask จะเลื่อนไปทั้งภาพ
    และการเทรนจะเสียเวลาไปเปล่าๆ
 """
 

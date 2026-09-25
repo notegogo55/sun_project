@@ -7,12 +7,14 @@ import { useReveal } from "../../hooks/useReveal.js";
 /** เปลือกการ์ดร่วมของทุกสถานะ (idle/loading/error/ready) — เดิมแต่ละสถานะก็อปวางเปลือก
  *  เดียวกันซ้ำ 4 ครั้ง ทำให้แก้ header หรือ reveal ทีต้องแก้ 4 ที่ */
 function RiskShell({ revealRef, children }) {
+  const { forecastModelInfo } = useApp();
+  const modelText = forecastModelInfo ? ` · โมเดล ${forecastModelInfo.label}` : "";
   return (
     <section ref={revealRef} id="risk" className="card card--gauge" aria-labelledby="h-risk" data-reveal>
       <div className="card__head">
         <div className="card__head-title">
           <h2 id="h-risk">Flare Risk</h2>
-          <span className="hint">ความเสี่ยงล่าสุดของ active region ที่เลือก</span>
+          <span className="hint">โอกาส ≥M1.0 รายชั่วโมง (18 SHARP) ของ active region ที่เลือก{modelText}</span>
         </div>
       </div>
       {children}

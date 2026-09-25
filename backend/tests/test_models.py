@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 import torch
 
-from sunseg.losses import BceDiceLoss, DiceLoss, FocalLoss, TverskyLoss
-from sunseg.models.lstm import FlareLSTM
+from sunseg.models.forecast.lstm import FlareLSTM
 from sunseg.models.unet import UNet, normalise_magnetogram
+from sunseg.training.losses import BceDiceLoss, DiceLoss, FocalLoss, TverskyLoss
 
 
 class TestFlareLSTM:

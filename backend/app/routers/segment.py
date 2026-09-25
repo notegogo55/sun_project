@@ -41,7 +41,7 @@ def _require_frames(services) -> list[str]:
         raise HTTPException(
             status_code=503,
             detail="ยังไม่มีเฟรมภาพที่ประมวลผลไว้ — "
-            "รัน `python backend/scripts/download_images.py` แล้วตามด้วย `backend/scripts/build_masks.py`",
+            "รัน `python backend/scripts/data/download_images.py` แล้วตามด้วย `backend/scripts/build_masks.py`",
         )
     return frames
 

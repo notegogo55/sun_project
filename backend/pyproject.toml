@@ -1,7 +1,7 @@
 [project]
 name = "sunseg"
 version = "0.1.0"
-description = "Solar active region segmentation/tracking (U-Net) + GOES flare forecasting (LSTM)"
+description = "Solar active region segmentation/tracking (U-Net) + GOES flare forecasting (LSTM / TCN / Transformer / DA-RNN)"
 readme = "../README.md"
 requires-python = ">=3.12,<3.13"
 
@@ -13,6 +13,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "opencv-python>=4.9",
     "matplotlib>=3.8",
+    "seaborn>=0.13",
     "astropy>=6.0",
     "sunpy[net,map,timeseries]>=5.1",
     "drms>=0.7",
@@ -28,6 +29,7 @@ dependencies = [
     "tqdm>=4.66",
     "tensorboard>=2.16",
     "Pillow>=10.2",
+    "optuna>=3.6",
 ]
 
 [project.optional-dependencies]

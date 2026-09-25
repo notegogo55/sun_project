@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field
 
 class HealthResponse(BaseModel):
     status: str
-    forecast_model: bool = Field(description="โมเดลพยากรณ์ flare พร้อมใช้งานหรือไม่")
+    forecast_model: bool = Field(description="มีโมเดลพยากรณ์ flare พร้อมใช้งานอย่างน้อยหนึ่งตัวหรือไม่")
+    forecast_models: dict[str, bool] = Field(
+        default_factory=dict, description="ความพร้อมรายโมเดล เรียงตาม configs/forecast.yaml"
+    )
+    default_forecast_model: str | None = Field(default=None, description="โมเดลที่หน้าเว็บเปิดมาเจอก่อน")
     segmentation_model: bool = Field(description="โมเดล segmentation พร้อมใช้งานหรือไม่")
     sequence_store: bool = Field(description="มีข้อมูล sequence ย้อนหลังให้เรียกดูหรือไม่")
     proton_flux: bool = Field(default=False, description="มีคลังฟลักซ์โปรตอนให้เรียกดูหรือไม่")
@@ -19,6 +23,9 @@ class HealthResponse(BaseModel):
     n_aia_frames: int = Field(default=0, description="จำนวนเฟรมที่มีภาพ AIA อย่างน้อยหนึ่งช่อง")
     flare_positions: bool = Field(
         default=False, description="มีตำแหน่ง flare จาก PositionFlare ที่จับคู่กับแคตตาล็อกโมเดลแล้วหรือไม่"
+    )
+    class_forecast: bool = Field(
+        default=False, description="คำพยากรณ์ระดับคลาส (<M/M/X) ของโมเดลหลัก LSTM + V3 พร้อมใช้งานหรือไม่"
     )
 
 
@@ -81,7 +88,40 @@ class FlarePositionsResponse(BaseModel):
     cycle: list[int | None]
 
 
+class ForecastModelTestMetrics(BaseModel):
+    tss: float | None = None
+    auc: float | None = None
+    recall: float | None = None
+    precision: float | None = None
+    hss2: float | None = None
+    bss: float | None = None
+    n: int | None = Field(default=None, description="จำนวน sample ของ test")
+    n_positive: int | None = Field(default=None, description="จำนวน positive จริงใน test")
+
+
+class ForecastModelSummary(BaseModel):
+    """โมเดลพยากรณ์หนึ่งตัว — สิ่งที่ปุ่มเลือกโมเดลและตารางเทียบผลบนหน้าเว็บต้องรู้"""
+
+    name: str = Field(description="ชื่อที่ใช้กับ ?model= และ artifacts/models/<name>.pt")
+    label: str
+    kind: str | None = Field(default=None, description="lstm | tcn | transformer | darnn (null ถ้ายังไม่ได้เทรน)")
+    pooling: str | None = Field(
+        default=None, description="attention | last | mean — last/mean ไม่มีน้ำหนัก attention ที่เรียนรู้ได้"
+    )
+    available: bool
+    default: bool = Field(description="เป็นโมเดลปริยายของหน้าเว็บหรือไม่")
+    threshold: float | None = None
+    n_parameters: int | None = None
+    val_tss: float | None = None
+    test: ForecastModelTestMetrics
+    baseline_test: ForecastModelTestMetrics | None = Field(
+        default=None, description="ผลบน test ของ logistic baseline ที่เทรนคู่กับโมเดลนี้"
+    )
+    train_hint: str | None = Field(default=None, description="คำสั่งที่ต้องรันถ้ายังไม่ได้เทรน")
+
+
 class ForecastSeriesResponse(BaseModel):
+    model: str = Field(default="lstm", description="ชื่อโมเดลที่ใช้พยากรณ์")
     harpnum: int
     noaa_ar: int | None = None
     n_points: int
@@ -92,6 +132,82 @@ class ForecastSeriesResponse(BaseModel):
     probabilities: list[float]
     actual_labels: list[int | None]
     latest: ForecastPoint | None = None
+
+
+class ClassForecastPoint(BaseModel):
+    """คำพยากรณ์ระดับคลาสของโมเดลหลัก ณ issue_time หนึ่ง (ช่วงพยากรณ์ 24 ชม. ถัดไป)"""
+
+    harpnum: int
+    noaa_ar: int | None = None
+    issue_time: str
+    level: str = Field(description='ระดับที่ทำนาย: "<M" (ไม่มีระดับไหนเตือน) | "M" | "X"')
+    true_level: str = Field(description="ระดับของ flare ที่เกิดจริงใน 24 ชม. ถัดไป (ข้อมูลย้อนหลัง)")
+    prob_m: float = Field(ge=0.0, le=1.0, description="ความน่าจะเป็น ≥M1.0 เฉลี่ยข้าม seed")
+    prob_x: float = Field(ge=0.0, le=1.0, description="ความน่าจะเป็น ≥X1.0 เฉลี่ยข้าม seed")
+    n_alarm_m: int = Field(description="จำนวน seed ของระดับ M ที่เตือน")
+    n_alarm_x: int = Field(description="จำนวน seed ของระดับ X ที่เตือน (threshold ราย seed)")
+    split: str = Field(description="train | val | test — ค่าของ train คือข้อมูลที่โมเดลเคยเห็นตอนเทรน")
+    lat: float | None = None
+    lon: float | None = None
+
+
+class ClassForecastSeriesResponse(BaseModel):
+    harpnum: int
+    noaa_ar: int | None = None
+    mode: str = Field(description="จุดทำงาน: sensitive (เตือนไว) | strict (ระมัดระวัง)")
+    cadence_hours: int | None = Field(default=None, description="ระยะห่างระหว่าง issue_time")
+    horizon_hours: int
+    points: list[ClassForecastPoint]
+    latest: ClassForecastPoint
+
+
+class ClassLevelMetrics(BaseModel):
+    """คำพยากรณ์ระดับคลาสที่ตัดเป็นทวิภาค "≥ ระดับนี้" """
+
+    n_positive: int
+    tp: int
+    fp: int
+    tn: int
+    fn: int
+    tss: float
+    hss2: float
+    precision: float | None = None
+    recall: float | None = None
+
+
+class ClassEvaluation(BaseModel):
+    levels: list[str]
+    n: int
+    confusion: list[list[int]] = Field(description="แถว = ระดับจริง, คอลัมน์ = ระดับที่ทำนาย (ลำดับตาม levels)")
+    hss_multiclass: float = Field(description="Heidke skill score แบบ 3 คลาส")
+    thresholds: dict[str, ClassLevelMetrics] = Field(description="ต่อระดับ M และ X")
+    exact_on_events: float | None = Field(
+        default=None, description="ในบรรดา sample ที่เกิด ≥M1.0 จริง สัดส่วนที่ทายระดับถูกเป๊ะ"
+    )
+    n_inconsistent: int = Field(description="ระดับ X เตือนแต่ระดับ M ไม่เตือน (นับเป็น X)")
+
+
+class ClassForecastSummary(BaseModel):
+    """โมเดลหลักของโปรเจค — ข้อมูลของโมเดลพร้อมผลบน val/test ของทุกจุดทำงาน"""
+
+    label: str
+    architecture: str
+    variant: str
+    available: bool
+    hint: str | None = Field(default=None, description="คำสั่งที่ต้องรันถ้ายังไม่พร้อม")
+    levels: list[str]
+    modes: list[str] = Field(description="จุดทำงานทั้งหมด ตัวแรกคือค่าปริยาย")
+    n_seeds: dict[str, int] = Field(default_factory=dict)
+    strict_threshold: float | None = Field(
+        default=None, description="threshold ของความน่าจะเป็นเฉลี่ยระดับ X ในจุดทำงาน strict (เลือกบน val)"
+    )
+    cadence_hours: int | None = None
+    sequence_length: int | None = None
+    features: list[str] = Field(default_factory=list)
+    positive_classes: dict[str, str]
+    evaluation: dict[str, dict[str, ClassEvaluation]] | None = Field(
+        default=None, description="[mode][split] — null ถ้ายังไม่พร้อม"
+    )
 
 
 class AiaIntensityOut(BaseModel):
@@ -300,7 +416,7 @@ class ConfusionMatrixSummary(BaseModel):
     ทั้งหมดอยู่ใน ``sunseg.metrics.threshold_sweep`` เท่านั้น
     """
 
-    model: str = Field(description='"lstm" หรือ "baseline"')
+    model: str = Field(description='ชื่อโมเดล (เช่น "lstm", "tcn") หรือ "baseline" สำหรับ logistic baseline')
     split: str = Field(description='"val" หรือ "test" — val คือชุดที่ใช้เลือก threshold ไม่ใช่ชุดรายงานผล')
     thresholds: list[float] = Field(description="กริด threshold ที่กวาด (np.linspace(0.01, 0.99, 200))")
     tp: list[int]
@@ -333,7 +449,9 @@ class ConfusionMatrixSampleList(BaseModel):
 
 
 class ModelInfoResponse(BaseModel):
-    forecast: dict
+    forecast: dict = Field(description="โมเดลพยากรณ์ปริยาย")
+    forecast_models: dict[str, dict] = Field(default_factory=dict, description="โมเดลพยากรณ์ทุกตัว")
+    default_forecast_model: str | None = None
     segmentation: dict
     data: dict
 

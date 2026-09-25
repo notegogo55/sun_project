@@ -352,7 +352,7 @@ class AiaFrameStore:
         else:
             logger.warning(
                 "ไม่พบภาพ AIA ที่ %s — หน้าเว็บจะมีเฉพาะเลเยอร์ magnetogram "
-                "(รัน backend/scripts/download_aia.py เพื่อดึงภาพสามชั้นบรรยากาศ)",
+                "(รัน backend/scripts/data/download_aia.py เพื่อดึงภาพสามชั้นบรรยากาศ)",
                 self.root,
             )
 

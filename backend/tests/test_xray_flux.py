@@ -279,6 +279,39 @@ class TestBinSeries:
         assert np.isnan(row["xray_max"])
         assert np.isnan(row["xray_min"])
         assert np.isnan(row["xray_log10_median"])
+        assert np.isnan(row["xray_log10_rel27d"])
+
+    def test_relative_level_is_zero_when_flux_is_constant(self, tmp_path):
+        for day in (17, 18, 19):
+            _write_day(tmp_path, datetime(2014, 10, day), [3e-6] * 1440, [0] * 1440)
+        store = XrayFluxStore(tmp_path)
+
+        df = store.bin_series(datetime(2014, 10, 20), datetime(2014, 10, 20), cadence_hours=24)
+
+        assert df.iloc[0]["xray_log10_rel27d"] == pytest.approx(0.0, abs=1e-6)
+
+    def test_relative_level_hand_computed(self, tmp_path):
+        """bin (19, 20] มีแต่ 4e-6 · ย้อนหลัง 27 วันมี 1e-6 และ 4e-6 อย่างละ 1440 จุด
+        (จุด 19 00:00 ของไฟล์วันที่ 19 ตกอยู่ bin ก่อนหน้า แต่ยังอยู่ในช่วงย้อนหลัง)
+        -> median ย้อนหลัง = (1e-6 + 4e-6) / 2 = 2.5e-6 -> ค่าสัมพัทธ์ = log10(4 / 2.5)"""
+        _write_day(tmp_path, datetime(2014, 10, 18), [1e-6] * 1440, [0] * 1440)
+        _write_day(tmp_path, datetime(2014, 10, 19), [4e-6] * 1440, [0] * 1440)
+        store = XrayFluxStore(tmp_path)
+
+        df = store.bin_series(datetime(2014, 10, 20), datetime(2014, 10, 20), cadence_hours=24)
+
+        assert df.iloc[0]["xray_log10_rel27d"] == pytest.approx(np.log10(4 / 2.5), rel=1e-5)
+
+    def test_relative_level_is_nan_exactly_when_the_bin_is_empty(self, tmp_path):
+        """ช่วงย้อนหลังของ bin ที่ว่างยังมีข้อมูล (วันที่ 18) แต่ค่าสัมพัทธ์ต้องเป็น NaN ตาม
+        median ของ bin — ไม่งั้น dataset จะเก็บแถวต่างจากเดิมเมื่อเพิ่มคอลัมน์นี้เข้าไป"""
+        _write_day(tmp_path, datetime(2014, 10, 18), [4e-6] * 1440, [0] * 1440)
+        store = XrayFluxStore(tmp_path)
+
+        df = store.bin_series(datetime(2014, 10, 19), datetime(2014, 10, 20), cadence_hours=24)
+
+        assert np.isfinite(df.iloc[0]["xray_log10_rel27d"])
+        assert np.isnan(df.iloc[1]["xray_log10_rel27d"])
 
     def test_partially_missing_range_marks_only_the_empty_bins(self, tmp_path):
         """bin ที่มีข้อมูลจริงต้องได้ค่าจริง bin ที่ไม่มีข้อมูลต้องได้ NaN — ไม่ปนกัน

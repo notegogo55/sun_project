@@ -19,12 +19,12 @@ def flare_positions(request: Request):
 
     ชุด flare และคลาสตรงกับแคตตาล็อกของโมเดลเสมอ (ไม่เพิ่มดวงจาก PositionFlare) ดวงที่หาคู่
     ไม่เจอหรือ PositionFlare ไม่ทราบตำแหน่ง จะมี lat/lon เป็น null — ข้อมูลคงที่ สร้างไว้
-    ล่วงหน้าด้วย ``scripts/build_flare_positions.py``
+    ล่วงหน้าด้วย ``scripts/data/build_flare_positions.py``
     """
     store = request.app.state.services.flare_positions
     if not store.available:
         raise HTTPException(
             status_code=503,
-            detail="ยังไม่มีตำแหน่ง flare — รัน `python backend/scripts/build_flare_positions.py` ก่อน",
+            detail="ยังไม่มีตำแหน่ง flare — รัน `python backend/scripts/data/build_flare_positions.py` ก่อน",
         )
     return store.payload()

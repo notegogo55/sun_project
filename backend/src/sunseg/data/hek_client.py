@@ -37,6 +37,10 @@ _HEK_COLUMNS = [
 # ลำดับความน่าเชื่อถือของแหล่ง detection — SWPC คือรายการอย่างเป็นทางการของ NOAA
 _SOURCE_PRIORITY = ["SWPC", "SSW Latest Events"]
 
+#: วันที่ NOAA ออกเลข AR 10000 — หลังจากนี้บางแหล่ง (SSW Latest Events) ยังเขียนเลขแบบ 4 หลัก
+#: (mod 10000) เช่น ``3014`` แทน ``13014`` ส่วนตาราง HARP-NOAA ของ JSOC ใช้เลขเต็ม 5 หลักเสมอ
+_NOAA_AR_ROLLOVER = pd.Timestamp("2002-06-14")
+
 #: คลาส ``astropy.time.Time`` โหลดแบบ lazy ด้วยเหตุผลเดียวกับ sunpy — โมดูลนี้ถูก
 #: import ตั้งแต่ตอนสตาร์ท แต่ astropy ใช้เวลา import นาน จึงเลี่ยงจนกว่าจะใช้จริง
 _TIME_CLS: type | None = None
@@ -117,7 +121,8 @@ def fetch_flare_events(
         return _empty_flare_frame()
 
     combined = pd.concat(frames, ignore_index=True)
-    return deduplicate_flares(combined)
+    # แก้ตรงนี้ ไม่ใช่ใน _hek_table_to_frame — cache เก่าบนดิสก์เก็บเลขดิบจาก HEK ไว้
+    return deduplicate_flares(normalise_noaa_ar(combined))
 
 
 def _empty_flare_frame() -> pd.DataFrame:
@@ -210,6 +215,26 @@ def _scalar(value):
     return value
 
 
+def normalise_noaa_ar(df: pd.DataFrame) -> pd.DataFrame:
+    """ทำเลข NOAA AR จากทุกแหล่งให้อยู่รูปเดียวกับตาราง HARP-NOAA (เลขเต็ม 5 หลัก)
+
+    สองรูปแบบที่ HEK คืนมาจริงและทำให้จับคู่ HARP ไม่ได้เงียบ ๆ (พบ 2026-09-23 — flare M+ ปี 2022
+    หายไป 171 จาก 193 ครั้ง):
+
+    - SWPC ใส่ ``0`` แทน "ไม่ทราบ" (ส่วนใหญ่ของปี 2022-2023) — ``0`` ไม่ใช่ NA จึงชนะ record
+      ของแหล่งอื่นที่มีเลขจริงตอน :func:`deduplicate_flares` แล้วตกหล่นตอนจับคู่ HARP
+    - SSW Latest Events เขียนเลข 4 หลัก (mod 10000) หลังวันที่ :data:`_NOAA_AR_ROLLOVER`
+    """
+    if df.empty:
+        return df
+    out = df.copy()
+    ar = pd.to_numeric(out["noaa_ar"], errors="coerce").astype("Float64")
+    ar = ar.where(ar > 0)
+    short = (ar < 10000) & (pd.to_datetime(out["peak_time"]) >= _NOAA_AR_ROLLOVER)
+    out["noaa_ar"] = ar.where(~short.fillna(False), ar + 10000).round().astype("Int64")
+    return out
+
+
 def deduplicate_flares(df: pd.DataFrame) -> pd.DataFrame:
     """ตัด event ซ้ำที่มาจากหลายอัลกอริทึม detection
 
@@ -224,7 +249,8 @@ def deduplicate_flares(df: pd.DataFrame) -> pd.DataFrame:
     priority = {name: rank for rank, name in enumerate(_SOURCE_PRIORITY)}
     df["_priority"] = df["frm_name"].map(lambda n: priority.get(n, len(_SOURCE_PRIORITY)))
     # record ที่ระบุ NOAA AR ได้มีค่ากับเรามากกว่า จึงให้ชนะ record ที่ไม่ระบุ
-    df["_has_ar"] = df["noaa_ar"].notna().astype(int)
+    # > 0 ไม่ใช่ notna — SWPC ใช้ 0 แทน "ไม่ทราบ" (ดู normalise_noaa_ar)
+    df["_has_ar"] = (pd.to_numeric(df["noaa_ar"], errors="coerce").fillna(0) > 0).astype(int)
     df["_peak_minute"] = df["peak_time"].dt.floor("min")
 
     before = len(df)

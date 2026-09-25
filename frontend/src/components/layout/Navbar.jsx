@@ -4,7 +4,8 @@ import { useApp } from "../../state/AppContext.js";
 import { DASHBOARD_GROUPS, dashboardHref } from "../../lib/nav.js";
 
 const SYSTEM_ITEMS = [
-  { key: "forecast_model", label: "LSTM", title: "โมเดล LSTM พยากรณ์ flare" },
+  // label ของจุดพยากรณ์ถูกแทนด้วยชื่อโมเดลที่เลือกอยู่ตอน render (ปริยาย LSTM เหมือนเดิม)
+  { key: "forecast_model", label: "LSTM", title: "โมเดลพยากรณ์ flare" },
   { key: "segmentation_model", label: "U-NET", title: "โมเดล U-Net แบ่งส่วน active region" },
   { key: "sequence_store", label: "DATA", title: "ข้อมูล SHARP sequence ย้อนหลัง" },
 ];
@@ -27,7 +28,7 @@ function UtcClock() {
 }
 
 export default function Navbar() {
-  const { health } = useApp();
+  const { health, forecastModelInfo, forecastModels } = useApp();
   const { pathname, hash } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [dropOpen, setDropOpen] = useState(false);
@@ -115,15 +116,26 @@ export default function Navbar() {
 
       <div className="navbar__right">
         <div className="sys-status" aria-label="สถานะระบบ">
-          {SYSTEM_ITEMS.map((item) => (
-            <span
-              key={item.key}
-              className={`sys-dot${health ? (health[item.key] ? " sys-dot--ok" : " sys-dot--off") : ""}`}
-              title={`${item.title}: ${health ? (health[item.key] ? "พร้อมใช้งาน" : "ยังไม่พร้อม") : "กำลังตรวจสอบ…"}`}
-            >
-              {item.label}
-            </span>
-          ))}
+          {SYSTEM_ITEMS.map((item) => {
+            let { label, title } = item;
+            let ready = health ? Boolean(health[item.key]) : null;
+            if (item.key === "forecast_model" && forecastModelInfo) {
+              // จุดนี้หมายถึงโมเดลที่หน้าเว็บกำลังใช้ ไม่ใช่ "มีโมเดลไหนสักตัว"
+              const nReady = forecastModels.filter((m) => m.available).length;
+              label = forecastModelInfo.label.toUpperCase();
+              title = `${item.title} ${forecastModelInfo.label} (พร้อม ${nReady} จาก ${forecastModels.length} โมเดล)`;
+              ready = forecastModelInfo.available;
+            }
+            return (
+              <span
+                key={item.key}
+                className={`sys-dot${ready === null ? "" : ready ? " sys-dot--ok" : " sys-dot--off"}`}
+                title={`${title}: ${ready === null ? "กำลังตรวจสอบ…" : ready ? "พร้อมใช้งาน" : "ยังไม่พร้อม"}`}
+              >
+                {label}
+              </span>
+            );
+          })}
         </div>
         <UtcClock />
         <button

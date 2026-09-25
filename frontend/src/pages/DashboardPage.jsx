@@ -2,12 +2,14 @@ import { Fragment } from "react";
 import { useApp } from "../state/AppContext.js";
 import { DASHBOARD_GROUPS } from "../lib/nav.js";
 import { PageHeader, StatTile } from "../components/ui/Headers.jsx";
+import ForecastModelPicker from "../components/ForecastModelPicker.jsx";
 import PresetsBar from "../components/PresetsBar.jsx";
 import FilterBar from "../components/FilterBar.jsx";
 import FrameCard from "../components/Dashboard/FrameCard.jsx";
 import ExtractionCard from "../components/Dashboard/ExtractionCard.jsx";
 import XrayCard from "../components/Dashboard/XrayCard.jsx";
 import ProtonCard from "../components/Dashboard/ProtonCard.jsx";
+import ClassForecastCard from "../components/Dashboard/ClassForecastCard.jsx";
 import RiskCard from "../components/Dashboard/RiskCard.jsx";
 import HarpListCard from "../components/Dashboard/HarpListCard.jsx";
 import AttentionCard from "../components/Dashboard/AttentionCard.jsx";
@@ -16,7 +18,7 @@ import AttentionCard from "../components/Dashboard/AttentionCard.jsx";
 const GROUP_CARDS = {
   imagery: [FrameCard, ExtractionCard],
   flux: [XrayCard, ProtonCard],
-  forecast: [RiskCard, HarpListCard, AttentionCard],
+  forecast: [ClassForecastCard, RiskCard, HarpListCard, AttentionCard],
 };
 
 export default function DashboardPage() {
@@ -30,8 +32,10 @@ export default function DashboardPage() {
       <PageHeader
         kicker="// SECTION_03 / LIVE PANELS"
         title="DASHBOARD"
-        sub="ภาพดวงอาทิตย์ · ฟลักซ์ GOES · พยากรณ์ LSTM — ทุกแผงใช้ช่วงเวลาเดียวกันจากแถบกรองด้านล่าง"
-      />
+        sub="ภาพดวงอาทิตย์ · ฟลักซ์ GOES · พยากรณ์ระดับคลาสของ flare (<M / M / X) ด้วยโมเดลหลัก LSTM + V3 — ทุกแผงใช้ช่วงเวลาเดียวกันจากแถบกรองด้านล่าง"
+      >
+        <ForecastModelPicker />
+      </PageHeader>
 
       <div className="stat-strip">
         <StatTile label="Range" value={`${range.start.slice(2)} → ${range.end.slice(2)}`} title="ช่วงเวลาที่ทุกแผงใช้ร่วมกัน" />

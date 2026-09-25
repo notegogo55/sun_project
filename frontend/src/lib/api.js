@@ -12,13 +12,23 @@ export async function fetchJson(url) {
   return payload;
 }
 
+/** ต่อท้าย `&model=<ชื่อ>` เมื่อระบุ — ไม่ระบุคือให้ backend ใช้โมเดลปริยาย (configs/forecast.yaml) */
+const modelParam = (model) => (model ? `&model=${encodeURIComponent(model)}` : "");
+
 export const api = {
   health: () => fetchJson("/api/health"),
   info: () => fetchJson("/api/info"),
   harps: () => fetchJson("/api/harps?limit=3000&only_flaring=false"),
-  forecast: (harpnum) => fetchJson(`/api/forecast?harpnum=${harpnum}&limit=2000`),
-  forecastAt: (isoDate) =>
-    fetchJson(`/api/forecast/at?time=${isoDate}T00:00:00&tolerance_hours=24`),
+  /** โมเดลพยากรณ์ทุกตัว (LSTM/TCN/Transformer/DA-RNN) พร้อมความพร้อมและผลบน test */
+  forecastModels: () => fetchJson("/api/forecast/models"),
+  forecast: (harpnum, model) =>
+    fetchJson(`/api/forecast?harpnum=${harpnum}&limit=2000${modelParam(model)}`),
+  forecastAt: (isoDate, model) =>
+    fetchJson(`/api/forecast/at?time=${isoDate}T00:00:00&tolerance_hours=24${modelParam(model)}`),
+  /** โมเดลหลัก (LSTM + V3) แยกระดับ <M/M/X — สรุป + ผล val/test ทุกจุดทำงาน (ตอบ 200 เสมอ พร้อม available/hint) */
+  classForecastSummary: () => fetchJson("/api/class-forecast/summary"),
+  classForecast: (harpnum, mode) =>
+    fetchJson(`/api/class-forecast?harpnum=${harpnum}&mode=${encodeURIComponent(mode)}`),
   goes: (start, end, minClass) =>
     fetchJson(`/api/goes?start=${start}&end=${end}&min_class=${minClass}`),
   xray: (start, end) => fetchJson(`/api/xray?start=${start}&end=${end}`),

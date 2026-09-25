@@ -40,7 +40,7 @@ def goes_events(
     if services.flares is None:
         raise HTTPException(
             status_code=503,
-            detail="ยังไม่มีรายการ flare — รัน `python backend/scripts/download_metadata.py` ก่อน",
+            detail="ยังไม่มีรายการ flare — รัน `python backend/scripts/data/download_metadata.py` ก่อน",
         )
 
     start_dt = parse_iso(start, "start")

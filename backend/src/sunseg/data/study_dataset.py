@@ -29,6 +29,13 @@ from .intensity import STATS as INTENSITY_STATS
 
 logger = logging.getLogger(__name__)
 
+#: กริดเวลาของ dataset งานเปรียบเทียบ — ทับ ``sharp.cadence_hours``/``sequence.length`` ของ
+#: ``configs/data.yaml`` (ซึ่งเป็นของ pipeline production: 1 ชม. × 24) โดยตั้งใจ
+#: 12 ชม. × 8 = ประวัติ 4 วัน (ดูเหตุผลใน spec) — ใช้ร่วมกันโดย ``scripts/study/build_dataset.py``,
+#: ``xray_sequence_gate_check.py`` และ ``measure_acquisition_time.py``
+STUDY_CADENCE_HOURS = 12
+STUDY_SEQUENCE_LENGTH = 8
+
 #: ความยาวคลื่น AIA ที่ intensity.py สกัดค่าให้ — ต้องตรงกับคอลัมน์ที่ intensity table มีจริง
 #: (ต้องเป็น superset ของ ``cfg.aia.channels`` ทุกช่องที่เคยรันผ่าน extract_intensity.py —
 #: ช่องไหนไม่อยู่ในนี้จะหายไปจาก feature pool เงียบๆ ถึงจะมีอยู่ใน intensity table จริงก็ตาม)
@@ -40,8 +47,52 @@ INTENSITY_COLUMNS: tuple[str, ...] = tuple(
     f"{channel}_{stat}" for channel in INTENSITY_CHANNELS for stat in INTENSITY_STATS
 )
 
-#: ชื่อคอลัมน์ X-ray ทั้ง 4 ตัวที่ ``XrayFluxStore.bin_series()`` คืนมา (ไม่รวม ``t_rec``)
-XRAY_COLUMNS: tuple[str, ...] = ("xray_median", "xray_max", "xray_min", "xray_log10_median")
+#: ชื่อคอลัมน์ X-ray ที่ ``XrayFluxStore.bin_series()`` คืนมา (ไม่รวม ``t_rec``) — คอลัมน์ใหม่
+#: ต่อท้ายเท่านั้น เพื่อให้ index ของ feature เดิมใน X.npy ไม่เลื่อน
+XRAY_COLUMNS: tuple[str, ...] = (
+    "xray_median", "xray_max", "xray_min", "xray_log10_median", "xray_log10_rel27d",
+)
+
+#: ประวัติ flare **ของ HARP นั้นเอง** ต่อ timestep (งาน feature-evidence-cv) — ต่อท้ายสุดเช่นกัน
+#: ต่างจาก X-ray ทั้งดวงข้างบนที่เท่ากันทุก HARP ณ เวลาเดียวกัน จึงแยกไม่ได้ว่าดวงไหนจะปะทุ
+FLARE_HISTORY_COLUMNS: tuple[str, ...] = ("ar_flare_log10max_12h", "ar_flare_count_c_12h")
+#: log10 flux ที่ใช้แทน "ไม่มี flare" — A1.0 ต่ำกว่า flare ที่เล็กที่สุดในแคตตาล็อก (6.8e-8)
+FLARE_HISTORY_FLOOR_LOG10 = -8.0
+FLARE_HISTORY_C_FLUX = 1e-6
+
+
+def intensity_columns_for(channels: tuple[str, ...]) -> tuple[str, ...]:
+    """ชื่อคอลัมน์ intensity ของช่องที่ระบุ เรียงแบบเดียวกับ :data:`INTENSITY_COLUMNS`"""
+    return tuple(f"{channel}_{stat}" for channel in channels for stat in INTENSITY_STATS)
+
+
+def flare_history_on_grid(
+    peak_times: np.ndarray, peak_fluxes: np.ndarray, grid: pd.DatetimeIndex, cadence_hours: int
+) -> np.ndarray:
+    """ประวัติ flare ของ HARP หนึ่งดวงบนกริด — คืน ``(len(grid), 2)`` ตาม :data:`FLARE_HISTORY_COLUMNS`
+
+    จุดกริด ``t`` สรุป flare ที่ peak ใน ``(t − cadence, t]`` — ช่วงนี้ **ไม่ทับ** กับหน้าต่างของ label
+    ``(t, t + horizon]`` ของ :func:`label_times` โดยโครงสร้าง (flare ที่ peak พอดี ``t`` อยู่ฝั่งนี้
+    ส่วน label ตัดทิ้ง) · เพราะหน้าต่างยาวเท่า cadence พอดี แต่ละ flare จึงตกลงช่องเดียวเสมอ
+    """
+    out = np.empty((len(grid), len(FLARE_HISTORY_COLUMNS)), dtype=np.float32)
+    out[:, 0] = FLARE_HISTORY_FLOOR_LOG10
+    out[:, 1] = 0.0
+    if len(peak_times) == 0 or len(grid) == 0:
+        return out
+
+    times = np.asarray(peak_times, dtype="datetime64[ns]")
+    fluxes = np.asarray(peak_fluxes, dtype=np.float64)
+    grid_ns = grid.to_numpy(dtype="datetime64[ns]")
+    # จุดกริดแรกที่ >= peak คือปลายขวาของช่อง (t − cadence, t] ที่ flare นั้นตกอยู่
+    slot = np.searchsorted(grid_ns, times, side="left")
+    inside = (slot < len(grid_ns)) & (times > grid_ns[0] - np.timedelta64(cadence_hours, "h"))
+    slot, fluxes = slot[inside], fluxes[inside]
+
+    log_flux = np.log10(np.clip(fluxes, 10**FLARE_HISTORY_FLOOR_LOG10, None)).astype(np.float32)
+    np.maximum.at(out[:, 0], slot, log_flux)
+    np.add.at(out[:, 1], slot, (fluxes >= FLARE_HISTORY_C_FLUX).astype(np.float32))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -105,11 +156,19 @@ def build_unified_window(
     grid_start: datetime,
     grid_end: datetime,
     cfg: DataConfig,
+    extra_intensity_channels: tuple[str, ...] = (),
+    flare_history: dict[int, tuple[np.ndarray, np.ndarray]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame, list[str]]:
     """สร้าง unified sequence dataset ของหน้าต่างเวลาต่อเนื่องหนึ่งช่วง
 
     Parameters
     ----------
+    extra_intensity_channels
+        ช่อง AIA ที่เพิ่มหลัง :data:`INTENSITY_CHANNELS` (เช่น ``("94", "131")``) — คอลัมน์ต่อท้ายหลัง X-ray
+        และ **ต้องมีครบทุก timestep ด้วย** เหมือนช่องเดิม (แถวร่วมของทุกแบบจึงเล็กลงตามช่องที่ขาด)
+    flare_history
+        HARPNUM -> ``(peak_times, peak_fluxes)`` ของ flare ทุกคลาสที่จับคู่กับ HARP นั้น — ส่งมาเมื่อ
+        ต้องการคอลัมน์ :data:`FLARE_HISTORY_COLUMNS` (ต่อท้ายสุด) · ``None`` = ไม่มีคอลัมน์เหล่านี้
     sharp
         ผ่าน :func:`sunseg.data.build_sequences.clean_sharp_frame` มาแล้ว
     intensity
@@ -128,7 +187,11 @@ def build_unified_window(
     feature + 15 + 4, ``feature_names`` เรียงลำดับตรงกับแกนสุดท้ายของ ``X``
     """
     features = list(cfg.sharp.features)
-    feature_names = [*features, *INTENSITY_COLUMNS, *XRAY_COLUMNS]
+    extra_intensity = list(intensity_columns_for(tuple(extra_intensity_channels)))
+    all_intensity = [*INTENSITY_COLUMNS, *extra_intensity]
+    history_names = list(FLARE_HISTORY_COLUMNS) if flare_history is not None else []
+    feature_names = [*features, *INTENSITY_COLUMNS, *XRAY_COLUMNS, *extra_intensity, *history_names]
+    n_base_intensity = len(INTENSITY_COLUMNS)
 
     seq_len = cfg.sequence.length
     cadence_hours = cfg.sharp.cadence_hours
@@ -171,14 +234,24 @@ def build_unified_window(
         group = group.sort_values("t_rec").set_index("t_rec")
         sharp_values, sharp_is_real = _reindex_on_grid(group, grid, features, tolerance)
 
-        intensity_group = intensity_by_harp.get(
-            harpnum, pd.DataFrame(columns=INTENSITY_COLUMNS)
-        )
+        intensity_group = intensity_by_harp.get(harpnum, pd.DataFrame(columns=all_intensity))
+        if not set(all_intensity) <= set(intensity_group.columns):
+            # ตาราง intensity ที่ไม่มีช่องใหม่ (เช่นของรอบเก่า) = ช่องนั้นขาดทุกจุด ไม่ใช่ KeyError
+            intensity_group = intensity_group.reindex(columns=all_intensity)
         intensity_values, intensity_is_real = _reindex_on_grid(
-            intensity_group, grid, list(INTENSITY_COLUMNS), tolerance
+            intensity_group, grid, all_intensity, tolerance
         )
 
-        values = np.concatenate([sharp_values, intensity_values, xray_values], axis=1)
+        blocks = [
+            sharp_values,
+            intensity_values[:, :n_base_intensity],
+            xray_values,
+            intensity_values[:, n_base_intensity:],
+        ]
+        if flare_history is not None:
+            peak_times, peak_fluxes = flare_history.get(harpnum, (np.empty(0), np.empty(0)))
+            blocks.append(flare_history_on_grid(peak_times, peak_fluxes, grid, cadence_hours))
+        values = np.concatenate(blocks, axis=1)
 
         windows = np.lib.stride_tricks.sliding_window_view(values, seq_len, axis=0)
         windows = np.ascontiguousarray(windows.transpose(0, 2, 1))  # (N, L, F)
@@ -269,7 +342,7 @@ def select_columns(feature_names: list[str], wanted: list[str]) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# นิยามแบบของการทดลอง (V0..V5) จากไฟล์ config — ดู configs/study_variants.yaml
+# นิยามแบบของการทดลอง (V0..V5) จากไฟล์ config — ดู configs/study/variants.yaml
 # --------------------------------------------------------------------------- #
 
 
@@ -286,7 +359,7 @@ def _flatten(items: list) -> list[str]:
 
 
 def load_variants(path) -> dict[str, dict]:
-    """อ่านนิยาม "แบบ" ของการทดลองจากไฟล์ YAML (ปริยาย ``configs/study_variants.yaml``)
+    """อ่านนิยาม "แบบ" ของการทดลองจากไฟล์ YAML (ปริยาย ``configs/study/variants.yaml``)
 
     คืน ``{variant_name: {"label": str, "role": str, "columns": list[str]}}`` —
     ``columns`` คลี่ (flatten) แล้ว พร้อมส่งเข้า :func:`select_columns` ตรงๆ

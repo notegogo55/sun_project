@@ -57,7 +57,7 @@ class SegmentationService:
         if not self.checkpoint_path.exists():
             logger.warning(
                 "ไม่พบ checkpoint ของ U-Net ที่ %s — ฟีเจอร์ segmentation จะปิดใช้งาน "
-                "(รัน backend/scripts/train_unet.py เพื่อสร้าง)",
+                "(รัน backend/scripts/segmentation/train.py เพื่อสร้าง)",
                 self.checkpoint_path,
             )
             return
@@ -102,7 +102,7 @@ class SegmentationService:
         """คืนแผนที่ความน่าจะเป็นขนาดเท่ากับ input"""
         if not self.available or self.model is None:
             raise RuntimeError(
-                "ยังไม่มีโมเดล segmentation ที่ใช้งานได้ — รัน backend/scripts/train_unet.py ก่อน"
+                "ยังไม่มีโมเดล segmentation ที่ใช้งานได้ — รัน backend/scripts/segmentation/train.py ก่อน"
             )
 
         data = normalise_magnetogram(np.asarray(magnetogram, dtype=np.float32), self.norm_scale)
@@ -169,7 +169,7 @@ class SegmentationService:
         else:
             if not self.available:
                 raise RuntimeError(
-                    "ยังไม่มีโมเดล segmentation — รัน backend/scripts/train_unet.py ก่อน "
+                    "ยังไม่มีโมเดล segmentation — รัน backend/scripts/segmentation/train.py ก่อน "
                     "หรือใช้ use_ground_truth=true เพื่อดู mask จาก SHARP"
                 )
             probability = self.segment(magnetogram)

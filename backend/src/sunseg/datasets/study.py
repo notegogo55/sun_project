@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..data.build_sequences import apply_normalisation
+from ..data.build_sequences import apply_normalisation, compute_normalisation
 from ..data.study_dataset import select_columns
 from .sequence import SequenceDataset, SequenceSplits
 
@@ -41,18 +41,18 @@ class StudyArrays:
 
 
 def load_study_arrays(processed_dir: Path) -> StudyArrays:
-    """โหลดสิ่งที่ ``backend/scripts/build_study_dataset.py`` เขียนไว้ พร้อมตรวจความสอดคล้อง"""
+    """โหลดสิ่งที่ ``backend/scripts/study/build_dataset.py`` เขียนไว้ พร้อมตรวจความสอดคล้อง"""
     processed_dir = Path(processed_dir)
     missing = [name for name in REQUIRED_FILES if not (processed_dir / name).exists()]
     if missing:
         raise FileNotFoundError(
-            f"ไม่พบไฟล์ {missing} ใน {processed_dir}\nรัน backend/scripts/build_study_dataset.py ก่อน"
+            f"ไม่พบไฟล์ {missing} ใน {processed_dir}\nรัน backend/scripts/study/build_dataset.py ก่อน"
         )
 
     x = np.load(processed_dir / "X.npy")
     y = np.load(processed_dir / "y.npy")
     meta = pd.read_parquet(processed_dir / "meta.parquet")
-    # features ถูกเก็บเป็น object array (ดู build_study_dataset.py) จึงต้อง allow_pickle
+    # features ถูกเก็บเป็น object array (ดู study/build_dataset.py) จึงต้อง allow_pickle
     npz = np.load(processed_dir / "norm_stats.npz", allow_pickle=True)
     features = [str(name) for name in npz["features"]]
     stats = {"mean": np.asarray(npz["mean"]), "std": np.asarray(npz["std"])}
@@ -92,6 +92,39 @@ def variant_splits(arrays: StudyArrays, columns: list[str]) -> SequenceSplits:
         val=datasets["val"],
         test=datasets["test"],
         meta=arrays.meta,
+        stats=stats,
+        features=list(columns),
+    )
+
+
+def fold_variant_splits(arrays: StudyArrays, columns: list[str], split_labels: pd.Series) -> SequenceSplits:
+    """เหมือน :func:`variant_splits` แต่รับ ``split_labels`` ของ fold หนึ่งแทน
+    ``arrays.meta["split"]`` — ใช้ตอน cross-validation ที่ split เปลี่ยนไปทุก fold
+
+    normalisation stats ถูกคำนวณใหม่จาก **train ของ fold นี้เท่านั้น** (ไม่ใช้
+    ``arrays.stats`` ซึ่งผูกกับ split เดียวของ pool ทั้งก้อน — ถ้าเผลอใช้ค่านั้นแทน
+    เท่ากับ normalise ด้วยสถิติที่เห็น val/test ของ fold นี้แล้ว เป็น leakage ทันที)
+    """
+    idx = select_columns(arrays.features, list(columns))
+    x_cols = arrays.x[:, :, idx]
+
+    train_mask = (split_labels == "train").to_numpy()
+    if not train_mask.any():
+        raise ValueError("fold นี้ไม่มี sample ใน train — คำนวณ normalisation stats ไม่ได้")
+    stats = compute_normalisation(x_cols, train_mask)
+    x = apply_normalisation(x_cols, stats)
+
+    datasets = {}
+    for name in ("train", "val", "test"):
+        mask = (split_labels == name).to_numpy()
+        datasets[name] = SequenceDataset(x[mask], arrays.y[mask])
+
+    meta = arrays.meta.assign(split=split_labels.to_numpy())
+    return SequenceSplits(
+        train=datasets["train"],
+        val=datasets["val"],
+        test=datasets["test"],
+        meta=meta,
         stats=stats,
         features=list(columns),
     )

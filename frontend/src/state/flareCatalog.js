@@ -1,9 +1,9 @@
 import { api } from "../lib/api.js";
 import { classIndex, cycleOf } from "../lib/flareClass.js";
 
-/** แคตตาล็อก flare ของแผนที่ตำแหน่งในหน้า HUB — flare ชุดเดียวกับที่ LSTM ใช้ทำ label ทุกดวง
+/** แคตตาล็อก flare ของแผนที่ตำแหน่งในหน้า HUB — flare ชุดเดียวกับที่โมเดลพยากรณ์ใช้ทำ label ทุกดวง
  *  (คลาสตามแคตตาล็อกของโมเดล) พร้อมพิกัดจาก PositionFlare ที่ backend จับคู่ไว้ล่วงหน้า
- *  (ดู backend/scripts/build_flare_positions.py) แยกจาก `goes` ใน AppProvider โดยเจตนา:
+ *  (ดู backend/scripts/data/build_flare_positions.py) แยกจาก `goes` ใน AppProvider โดยเจตนา:
  *  `goes` ผูกกับช่วงเวลาที่เลือกใน dashboard ส่วนแผนที่นี้ต้องเห็นทุกดวงทุกปี
  *
  *  API ส่งแบบ columnar (ทุก list ยาวเท่ากัน) — แปลงเป็นแถวที่นี่ครั้งเดียว เก็บ promise ไว้ระดับ

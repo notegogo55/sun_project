@@ -1,0 +1,148 @@
+# โมเดลพยากรณ์ flare >= M1.0 ภายใน 24 ชม. — สี่สถาปัตยกรรมที่ระบบรองรับ
+#
+#   python backend/scripts/forecast/train.py --model tcn     # เทรนทีละตัว
+#   python backend/scripts/forecast/train.py --model all     # ทุกตัวเรียงกัน (ไม่รันพร้อมกัน)
+#
+# ชื่อโมเดล (key ใต้ models:) คือชื่อที่ใช้ทุกที่: --model ของสคริปต์เทรน,
+# artifacts/models/<ชื่อ>.pt, artifacts/metrics/<ชื่อ>.json และ ?model=<ชื่อ> ของ API
+#
+# ขนาดโมเดลถูกกำหนดโดย "จำนวนตัวอย่างที่เป็นอิสระต่อกันจริง" ไม่ใช่จำนวนแถว
+#
+# ชุดข้อมูลมี ~208,000 sample แต่ sample ที่ห่างกัน 1 ชม. จาก AR ดวงเดียวกันแทบ
+# เหมือนกันทุกประการ **effective sample size จริงคือจำนวน HARP ที่เคยเกิด flare
+# ซึ่งมีเพียง ~114 ดวง** โมเดลทุกตัวจึงต้องเล็กมาก (หลักพันถึงหมื่นพารามิเตอร์)
+#
+# ผลการทดลองกับ LSTM (test TSS เทียบกับ logistic-regression baseline ที่ได้ 0.908):
+#   hidden=128, layers=2 (224k พารามิเตอร์) -> val 0.846 / test 0.425  overfit หนัก
+#   hidden=32,  layers=1 (~7k พารามิเตอร์)  -> ดูผลล่าสุดใน artifacts/metrics/lstm.json
+
+# ------------------------------------------------------------------ #
+# โมเดลหลักของโปรเจค (ตั้งแต่ 2026-09-24) — LSTM + V3 แยกระดับคลาส <M / M / X
+# ------------------------------------------------------------------ #
+# ไม่ใช่หนึ่งใน models: ข้างล่าง — เป็นเซลล์ (สถาปัตยกรรม, แบบ) ของงานเปรียบเทียบที่เทรนสองครั้งด้วย label
+# ≥M1.0 และ ≥X1.0 (ทุก seed) แล้วรวมเป็นระดับเดียว (sunseg.inference.class_forecast) · หน้าเว็บ: การ์ด
+# "Flare Class Forecast" + /api/class-forecast · รายงาน: backend/scripts/study/class_forecast.py
+# ลบหัวข้อนี้ทิ้งได้ — ค่าปริยายใน config.py คือค่าชุดเดียวกันนี้
+
+class_forecast:
+  architecture: lstm
+  variant: V3
+  levels:            # ต้องเป็น M แล้ว X ตามลำดับ
+    M: {positive_class: M1.0, study_dir: model_comparison, dataset: study_sequences}
+    X: {positive_class: X1.0, study_dir: model_comparison_x, dataset: study_sequences_x}
+
+# ------------------------------------------------------------------ #
+# โมเดลความเสี่ยงรายชั่วโมง (≥M1.0 จาก 18 SHARP ทุก 1 ชม.) — แผง "Flare Risk" บนหน้าเว็บ
+# ------------------------------------------------------------------ #
+
+# ตัวที่หน้าเว็บเปิดมาเจอก่อน (และตัวที่ API ใช้เมื่อไม่ระบุ ?model=)
+default_model: lstm
+
+# ------------------------------------------------------------------ #
+# ค่าร่วมของทุกโมเดล — โมเดลใดระบุ train:/loss: ของตัวเองจะทับเฉพาะ key ที่ระบุ
+# (ทับได้เฉพาะ epochs/lr/weight_decay/early_stop_patience และ focal_alpha/focal_gamma —
+# batch_size/scheduler/warmup/grad_clip ต้องเหมือนกันทุกตัว ดู TrainOverride ใน config.py)
+# ------------------------------------------------------------------ #
+
+train:
+  epochs: 60
+  batch_size: 256           # โมเดลเล็ก + ข้อมูลตาราง — 4GB VRAM เหลือเฟือ
+  lr: 5.0e-4
+  weight_decay: 1.0e-3      # regularisation แรงขึ้นเพื่อกด overfitting
+  grad_clip: 1.0
+  early_stop_patience: 12
+  scheduler: cosine
+  warmup_epochs: 3
+  seed: 42
+
+loss:
+  type: focal               # positive rate จริงอยู่ที่ ~1-3% เท่านั้น
+  focal_alpha: 0.75
+  focal_gamma: 2.0
+
+eval:
+  # เลือก threshold ที่ maximize TSS บน validation แล้ว freeze ก่อนวัดผลบน test
+  select_threshold_on: val
+  primary_metric: tss
+
+# ------------------------------------------------------------------ #
+# โมเดลทั้งสี่ตัว
+# ------------------------------------------------------------------ #
+
+models:
+  # ทั้งสี่ตัวใช้ hyperparameter จากการค้นหาของงานเปรียบเทียบ (2026-09-22,
+  # backend/scripts/study/tune.py — งบเท่ากันทุกตัว 40 trial x 3 seed x 2 fold, ดู
+  # docs/adr/0001-tune-per-architecture.md และ configs/study/architectures.yaml)
+  #
+  # **ข้อควรรู้**: การค้นหานั้นทำบน dataset ของงานเปรียบเทียบ (8 timestep ที่ cadence 12 ชม.)
+  # ไม่ใช่ dataset ของ production (24 timestep ที่ cadence 1 ชม.) — เป็นค่าที่ดีที่สุดเท่าที่มี
+  # หลักฐาน ไม่ใช่ค่าที่ค้นหามาสำหรับหน้าต่างนี้โดยตรง
+
+  lstm:
+    # ค่าเดียวกับ anchor ของงานเปรียบเทียบ (architectures.yaml: lstm) — ตั้งแต่ 2026-09-23
+    # ก่อนหน้านั้นระบบใช้ค่าตั้งมือ (dropout 0.4, attention pooling, lr 5e-4, wd 1e-3,
+    # focal 0.75/2.0) ซึ่งยังรันอยู่ในงานเปรียบเทียบเป็นแถวเสริม lstm_production และ checkpoint
+    # เดิมเก็บไว้ที่ D:\other result\...\superseded\lstm_production_untuned_20260920\
+    model:
+      kind: lstm
+      hidden_size: 32
+      num_layers: 1
+      dropout: 0.48500392500755257
+      pooling: last
+    train:
+      lr: 0.0027102898128767237
+      weight_decay: 0.0037122126477891282
+      early_stop_patience: 12
+    loss:
+      focal_alpha: 0.6801825577397586
+      focal_gamma: 1.8924473440526008
+
+  tcn:
+    # kernel 2, dilation 1..16 -> receptive field 32 คลุมหน้าต่าง 24 ของ production ได้พอดี
+    model:
+      kind: tcn
+      channels: 40
+      kernel_size: 2
+      dilations: [1, 2, 4, 8, 16]
+      dropout: 0.26517281758017786
+      pooling: last
+    train:
+      lr: 0.001395584029600283
+      weight_decay: 0.00011061847364452465
+      early_stop_patience: 8
+    loss:
+      focal_alpha: 0.742274823007715
+      focal_gamma: 2.722897537233276
+
+  transformer:
+    # positional embedding ผูกกับความยาวหน้าต่าง — สร้างด้วย seq_len ของ dataset ที่เทรน
+    model:
+      kind: transformer
+      d_model: 24
+      n_heads: 2
+      ff_dim: 32
+      n_layers: 1
+      dropout: 0.40462009893098894
+      pooling: last
+    train:
+      lr: 0.0014496902855057323
+      weight_decay: 0.00023663069738689616
+      early_stop_patience: 16
+    loss:
+      focal_alpha: 0.7408902499005017
+      focal_gamma: 1.9432196813817826
+
+  darnn:
+    # วนทีละ timestep ด้วย LSTMCell — ช้ากว่า LSTM ราวสิบเท่าต่อ epoch (ดู models/forecast/darnn.py)
+    model:
+      kind: darnn
+      hidden_size: 16
+      dropout: 0.293185262892693
+      pooling: last
+    train:
+      lr: 0.0016779945998788236
+      weight_decay: 0.0033860939038207424
+      early_stop_patience: 12
+    loss:
+      focal_alpha: 0.6876676105573225
+      focal_gamma: 1.3076934839011818

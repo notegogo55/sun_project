@@ -23,17 +23,17 @@ const STEPS = [
   {
     tag: "FORECASTING",
     icon: "∿",
-    title: "LSTM · Flare ≥M1.0 in 24 h",
-    sub: "SHARP PARAMETERS · 24-STEP HISTORY",
-    desc: "ทำนายโอกาสเกิด flare ≥M1.0 ภายใน 24 ชม. จาก SHARP magnetic parameters ย้อนหลัง 24 จุด พร้อมน้ำหนัก attention ว่าโมเดลสนใจช่วงไหน",
-    to: dashboardHref("risk"),
+    title: "LSTM + V3 · <M / M / X",
+    sub: "FLARE CLASS IN 24 H · MAIN MODEL",
+    desc: "โมเดลหลัก LSTM + V3 ทำนายว่า flare ที่แรงที่สุดใน 24 ชม. ถัดไปจะอยู่ระดับ X, M หรือต่ำกว่า M จาก SHARP + ความเข้มแสง AIA + X-ray สลับได้ระหว่างโหมดเตือนไวกับระมัดระวัง · มีโมเดลความเสี่ยง ≥M1.0 รายชั่วโมงอีกสี่แบบให้เทียบ",
+    to: dashboardHref("class"),
   },
   {
     tag: "EVALUATION",
     icon: "▦",
     title: "TSS · AUC · Confusion Matrix",
     sub: "HARP-DISJOINT TEST SET",
-    desc: "เทียบ LSTM กับ logistic regression บนชุดทดสอบที่ HARP ไม่ซ้ำกับชุดฝึก ปรับ threshold ดูการแลกเปลี่ยนระหว่าง hit กับ false alarm ได้ทันที",
+    desc: "เทียบโมเดลพยากรณ์ทั้งสี่กับ logistic regression บนชุดทดสอบที่ HARP ไม่ซ้ำกับชุดฝึก ปรับ threshold ดูการแลกเปลี่ยนระหว่าง hit กับ false alarm ได้ทันที",
     to: "/model",
   },
 ];

@@ -112,7 +112,7 @@ proton:
   after_hours: 60
 
 # ตำแหน่ง flare บนจานสุริยะ (แผนที่ในหน้าแรกของเว็บ) — ใช้ตอนรัน
-# backend/scripts/build_flare_positions.py เท่านั้น ไม่ใช่ feature ของโมเดล
+# backend/scripts/data/build_flare_positions.py เท่านั้น ไม่ใช่ feature ของโมเดล
 #
 # แคตตาล็อกของโมเดลมีพิกัดแค่ปี ≤ 2017 จึงยืมตำแหน่งจาก PositionFlare มาแปะให้ flare ชุดเดียวกัน
 # (จับคู่ด้วยเวลาพีค) ไฟล์อยู่นอก repo: ตั้ง SUNSEG_POSITION_FLARE_CSV ใน .env เพื่อทับค่านี้
@@ -152,7 +152,7 @@ aia:
   # จงใจตั้งสูงกว่า p50 อยู่ราว 1.4-2 เท่า เพื่อเผื่อหัวให้เฟรมที่คึกคักไม่ถูกตัดยอด
   # ดูเหมือนจะทำให้ภาพมืด แต่ AsinhStretch(0.02) บีบช่วงสว่างไว้แรงมากจนไม่เป็นเช่นนั้น
   # (ตรวจด้วยตาแล้ว — อย่าปรับค่าพวกนี้จากตัวเลขอย่างเดียว ให้เรนเดอร์ออกมาดูจริงเสมอ)
-  # สคริปต์ download_aia.py พิมพ์ p99.9 ที่วัดได้ทุกครั้งเพื่อใช้เทียบ
+  # สคริปต์ data/download_aia.py พิมพ์ p99.9 ที่วัดได้ทุกครั้งเพื่อใช้เทียบ
   #
   # **4500 เพิ่มเข้ามา (2026-09-14)** แทนที่บทบาทของ 1600 ในชุด intensity feature: เป็น
   # โฟโตสเฟียร์จริง (continuum ไม่ใช่ UV แบบ 1600 จึงไม่ควรมีปัญหา quiet-Sun drift ตามรอบ
@@ -162,6 +162,11 @@ aia:
   # = 53702.5 — ตั้ง vmax สูงกว่านั้นเผื่อหัว (ตัวอย่างเล็ก 5 เฟรมตอนทดสอบได้แค่ 20755.8 เพราะสุ่ม
   # ได้แต่เฟรมช่วง solar minimum ปี 2011) ยังไม่ตรวจด้วยตาแบบ AsinhStretch เหมือน 3 ช่องเดิม —
   # กระทบแค่การแสดงผลหน้าเว็บ ไม่กระทบ pipeline ดึง feature (quiet_sun_normalise ไม่ใช้ค่านี้)
+  #
+  # **94 และ 131 เพิ่มเข้ามา (2026-09-23)** สำหรับงาน feature-evidence-cv (ดู
+  # .scratch/feature-evidence-cv/spec.md): โคโรนาร้อน (Fe XVIII ~6 MK, Fe XXI ~10 MK) ที่เห็นการ
+  # ร้อนขึ้นก่อน flare ซึ่ง magnetogram ไม่เห็น — ต่างจาก 4500 ที่ซ้ำกับ SHARP (R² 0.76 จาก 18 SHARP)
+  # display_vmax สองช่องนี้เป็นค่าชั่วคราวจากเฟรมทดสอบ ยังไม่ตรวจด้วยตา — กระทบแค่หน้าเว็บ
   channels:
     - wavelength: 4500
       label: "AIA 4500 Å"
@@ -179,6 +184,14 @@ aia:
       label: "AIA 171 Å"
       region: "โคโรนา"
       display_vmax: 2500.0
+    - wavelength: 131
+      label: "AIA 131 Å"
+      region: "โคโรนาร้อน / flare"
+      display_vmax: 400.0
+    - wavelength: 94
+      label: "AIA 94 Å"
+      region: "โคโรนาร้อน"
+      display_vmax: 60.0
 
 sequence:
   length: 24                # 24 timesteps x cadence 1 ชม. = ประวัติ 24 ชม.
@@ -236,3 +249,24 @@ split:
   train_end: "2023-12-31"
   val_end: "2024-12-31"
   gap_days: 14              # ~อายุขัยของ HARP หนึ่งดวง
+
+  # เฉพาะตอนรันด้วย --cv (rolling/blocked-window cross-validation) — ไม่กระทบ
+  # train_end/val_end ข้างบนซึ่งยังเป็นเส้นแบ่งของโหมด single-split ปกติ
+  #
+  # train มีขนาดคงที่ train_years ปี แล้วเลื่อนไปข้างหน้าทีละ step_years ปีต่อ fold (blocked
+  # ไม่ expand) ต้องเลื่อนตามเวลาเท่านั้น ห้ามสุ่มแบบ k-fold ทั่วไป ด้วยเหตุผลเดียวกับ leakage
+  # สองข้อที่อธิบายไว้บนสุดของไฟล์นี้ (autocorrelation ภายใน HARP + label มองอนาคต)
+  #
+  # ข้อมูลจริงกระจุกตัวมาก (ดูตารางเทียบเส้นแบ่งข้างบน): positive แทบทั้งหมดอยู่ปี 2011-2015
+  # และ 2024-2025 ส่วนปี 2016-2023 เบาบางมาก (0.6%) และ 2018-2021 ไม่มีข้อมูลเลย fold ที่ตกลง
+  # ช่วงนี้จะมี val/test positive น้อยเกินกว่าจะวัด TSS ได้นิ่ง — min_val_positive/
+  # min_test_positive ให้ตัด fold แบบนั้นทิ้งอัตโนมัติพร้อม log แทนที่จะนับรวมอย่างเงียบๆ
+  # (เกณฑ์ 40 อ้างจากการเทียบเส้นแบ่งข้างบน: val positive 40/24 เคยถูกตัดสินว่า "น้อยเกินกว่า
+  # จะเลือก threshold ได้นิ่ง" ตอนหาเส้นแบ่งของ single split)
+  cv:
+    train_years: 3
+    val_years: 1
+    test_years: 1
+    step_years: 1
+    min_val_positive: 40
+    min_test_positive: 40

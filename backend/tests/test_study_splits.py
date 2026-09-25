@@ -81,7 +81,7 @@ class TestLoadStudyArrays:
         if label_override is not None:
             meta["label"] = label_override
         meta.to_parquet(tmp_path / "meta.parquet", index=False)
-        # เก็บแบบเดียวกับ build_study_dataset.py (features เป็น object array)
+        # เก็บแบบเดียวกับ study/build_dataset.py (features เป็น object array)
         np.savez(
             tmp_path / "norm_stats.npz",
             mean=arrays.stats["mean"],
@@ -101,7 +101,7 @@ class TestLoadStudyArrays:
         assert list(loaded.meta["split"]) == list(arrays.meta["split"])
 
     def test_missing_files_point_to_the_builder_script(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match="build_study_dataset"):
+        with pytest.raises(FileNotFoundError, match="study/build_dataset"):
             load_study_arrays(tmp_path)
 
     def test_meta_out_of_order_with_y_is_rejected(self, tmp_path):

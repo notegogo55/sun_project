@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 
 from sunseg.logging_utils import setup_logging  # noqa: E402
 
-from .routers import forecast, goes, positions, proton, segment, xray  # noqa: E402
+from .routers import class_forecast, forecast, goes, positions, proton, segment, xray  # noqa: E402
 from .schemas import HealthResponse, ModelInfoResponse  # noqa: E402
 from .services import AppServices  # noqa: E402
 
@@ -58,12 +58,15 @@ app = FastAPI(
     title="sunseg — Solar Active Region Segmentation & Flare Forecast",
     description=(
         "ระบบติดตามสภาพอวกาศแบบครบวงจร: แบ่งส่วน active region ด้วย U-Net, "
-        "ติดตามข้ามเวลาโดยชดเชยการหมุนของดวงอาทิตย์ และพยากรณ์การเกิด solar flare ด้วย LSTM"
+        "ติดตามข้ามเวลาโดยชดเชยการหมุนของดวงอาทิตย์ และพยากรณ์ระดับคลาสของ solar flare (<M / M / X) ด้วย "
+        "โมเดลหลัก LSTM + V3 (SHARP + intensity + X-ray) พร้อมโมเดลลำดับเวลารายชั่วโมงอีกสี่สถาปัตยกรรม "
+        "(LSTM, TCN, Transformer, DA-RNN)"
     ),
     version="0.1.0",
     lifespan=lifespan,
 )
 
+app.include_router(class_forecast.router)
 app.include_router(forecast.router)
 app.include_router(segment.router)
 app.include_router(goes.router)
@@ -78,7 +81,9 @@ def health(request: Request):
     services = request.app.state.services
     return HealthResponse(
         status="ok",
-        forecast_model=services.forecast.available,
+        forecast_model=services.forecast.any_available,
+        forecast_models={name: s.available for name, s in services.forecast.services.items()},
+        default_forecast_model=services.forecast.default_name,
         segmentation_model=services.segmentation.available,
         sequence_store=services.sequences.available,
         proton_flux=services.proton.available,
@@ -87,6 +92,7 @@ def health(request: Request):
         n_frames=len(services.segmentation.list_frames()),
         n_aia_frames=services.aia.n_frames,
         flare_positions=services.flare_positions.available,
+        class_forecast=services.class_forecast.available,
     )
 
 

@@ -1,4 +1,8 @@
-"""API พยากรณ์ flare"""
+"""API พยากรณ์ flare — ทุก endpoint เลือกโมเดลได้ด้วย ``?model=<ชื่อ>``
+
+ชื่อโมเดลคือ key ใต้ ``models:`` ของ ``configs/forecast.yaml`` (lstm, tcn, transformer, darnn)
+ไม่ระบุคือใช้ ``default_model`` ของไฟล์นั้น — client เดิมที่ไม่รู้จักพารามิเตอร์นี้จึงได้ผลเหมือนเดิม
+"""
 
 from __future__ import annotations
 
@@ -9,10 +13,13 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from sunseg.inference.forecast import ForecastService, risk_level
+
 from ..schemas import (
     ConfusionMatrixSample,
     ConfusionMatrixSampleList,
     ConfusionMatrixSummary,
+    ForecastModelSummary,
     ForecastPoint,
     ForecastSeriesResponse,
     HarpSummary,
@@ -22,22 +29,39 @@ from ..schemas import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["forecast"])
 
+_MODEL_QUERY = Query(None, description="ชื่อโมเดล (lstm, tcn, transformer, darnn) — ไม่ระบุคือโมเดลปริยาย")
+_SEQUENCES_HINT = "ยังไม่มีข้อมูล sequence — รัน `python backend/scripts/data/build_sequences.py` ก่อน"
+
 
 def _services(request: Request):
     return request.app.state.services
 
 
-def _require_ready(services) -> None:
-    if not services.forecast.available:
+def _model(services, name: str | None) -> ForecastService:
+    """โมเดลที่ขอ — ชื่อที่ไม่รู้จักเป็น 422 (ค่าพารามิเตอร์ผิด), ยังไม่ได้เทรนเป็น 503 พร้อมคำสั่งที่ต้องรัน"""
+    try:
+        service = services.forecast.get(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc.args[0])) from exc
+    if not service.available:
         raise HTTPException(
             status_code=503,
-            detail="ยังไม่มีโมเดลพยากรณ์ — รัน `python backend/scripts/train_lstm.py` ก่อน",
+            detail=f"ยังไม่มีโมเดลพยากรณ์ {service.label} — รัน `{service.train_hint}` ก่อน",
         )
     if not services.sequences.available:
-        raise HTTPException(
-            status_code=503,
-            detail="ยังไม่มีข้อมูล sequence — รัน `python backend/scripts/build_sequences.py` ก่อน",
-        )
+        raise HTTPException(status_code=503, detail=_SEQUENCES_HINT)
+    return service
+
+
+@router.get(
+    "/forecast/models",
+    response_model=list[ForecastModelSummary],
+    summary="โมเดลพยากรณ์ทั้งหมด พร้อมความพร้อมและผลบน test",
+)
+def list_models(request: Request):
+    """เรียงตาม ``configs/forecast.yaml`` — ตัวที่ยังไม่ได้เทรนก็อยู่ในรายการ (``available: false``)
+    พร้อมคำสั่งที่ต้องรันใน ``train_hint``"""
+    return _services(request).forecast.summaries()
 
 
 @router.get("/harps", response_model=list[HarpSummary], summary="รายการ active region ที่มีข้อมูล")
@@ -49,10 +73,7 @@ def list_harps(
     """เรียงตามจำนวนหน้าต่างเวลาที่เกิด flare จริง — HARP ที่น่าสนใจที่สุดจะอยู่บนสุด"""
     services = _services(request)
     if not services.sequences.available:
-        raise HTTPException(
-            status_code=503,
-            detail="ยังไม่มีข้อมูล sequence — รัน `python backend/scripts/build_sequences.py` ก่อน",
-        )
+        raise HTTPException(status_code=503, detail=_SEQUENCES_HINT)
 
     harps = services.sequences.available_harps(limit=limit * 4)
     if only_flaring:
@@ -71,13 +92,14 @@ def forecast_series(
     start: str | None = Query(None, description="เวลาเริ่มต้น เช่น 2014-01-01"),
     end: str | None = Query(None, description="เวลาสิ้นสุด"),
     limit: int = Query(500, ge=1, le=5000),
+    model: str | None = _MODEL_QUERY,
 ):
     """คืนความน่าจะเป็นการเกิด flare ตลอดช่วงเวลาที่ AR ดวงนั้นถูกสังเกต
 
     เป็น endpoint หลักที่หน้าเว็บใช้วาดกราฟความเสี่ยงตามเวลา
     """
     services = _services(request)
-    _require_ready(services)
+    forecaster = _model(services, model)
 
     rows = services.sequences.find_rows(
         harpnum=harpnum,
@@ -92,7 +114,7 @@ def forecast_series(
         )
 
     sequences = np.stack([services.sequences.sequence_at(i) for i in rows["row"]])
-    probabilities, attention = services.forecast.predict_batch(sequences)
+    probabilities, attention = forecaster.predict_batch(sequences)
 
     noaa = rows["noaa_ar"].dropna()
     latest_row = rows.iloc[-1]
@@ -102,13 +124,13 @@ def forecast_series(
         noaa_ar=None if noaa.empty else int(noaa.iloc[-1]),
         issue_time=latest_row["issue_time"].isoformat(),
         probability=float(probabilities[-1]),
-        predicted_positive=bool(probabilities[-1] >= services.forecast.threshold),
-        threshold=services.forecast.threshold,
-        risk_level=_risk_level(float(probabilities[-1]), services.forecast.threshold),
+        predicted_positive=bool(probabilities[-1] >= forecaster.threshold),
+        threshold=forecaster.threshold,
+        risk_level=risk_level(float(probabilities[-1]), forecaster.threshold),
         attention=[float(a) for a in attention[-1]],
         features={
             name: float(value)
-            for name, value in zip(services.forecast.features, sequences[-1, -1], strict=True)
+            for name, value in zip(forecaster.features, sequences[-1, -1], strict=True)
         },
         lat=_optional_float(latest_row.get("lat")),
         lon=_optional_float(latest_row.get("lon")),
@@ -116,12 +138,13 @@ def forecast_series(
     )
 
     return ForecastSeriesResponse(
+        model=forecaster.name,
         harpnum=harpnum,
         noaa_ar=None if noaa.empty else int(noaa.iloc[0]),
         n_points=len(rows),
-        horizon_hours=services.forecast.horizon_hours,
-        positive_class=services.forecast.positive_class,
-        threshold=services.forecast.threshold,
+        horizon_hours=forecaster.horizon_hours,
+        positive_class=forecaster.positive_class,
+        threshold=forecaster.threshold,
         times=[t.isoformat() for t in rows["issue_time"]],
         probabilities=[round(float(p), 5) for p in probabilities],
         actual_labels=[_optional_int(v) for v in rows["label"]],
@@ -138,10 +161,11 @@ def forecast_at_time(
     request: Request,
     time: str = Query(..., description="เวลาที่ต้องการ เช่น 2014-01-07T12:00:00"),
     tolerance_hours: float = Query(3.0, ge=0.5, le=48.0),
+    model: str | None = _MODEL_QUERY,
 ):
     """ภาพรวมความเสี่ยงของทุก AR ที่มีข้อมูล ณ ช่วงเวลาหนึ่ง — ใช้คู่กับแผงภาพดวงอาทิตย์"""
     services = _services(request)
-    _require_ready(services)
+    forecaster = _model(services, model)
 
     target = parse_iso(time, "time")
     window = pd.Timedelta(hours=tolerance_hours)
@@ -159,7 +183,7 @@ def forecast_at_time(
     nearest = rows.sort_values("_gap").drop_duplicates("HARPNUM").sort_values("HARPNUM")
 
     sequences = np.stack([services.sequences.sequence_at(i) for i in nearest["row"]])
-    probabilities, attention = services.forecast.predict_batch(sequences)
+    probabilities, attention = forecaster.predict_batch(sequences)
 
     results = []
     for position, (_, row) in enumerate(nearest.iterrows()):
@@ -170,15 +194,13 @@ def forecast_at_time(
                 noaa_ar=_optional_int(row.get("noaa_ar")),
                 issue_time=row["issue_time"].isoformat(),
                 probability=round(probability, 5),
-                predicted_positive=probability >= services.forecast.threshold,
-                threshold=services.forecast.threshold,
-                risk_level=_risk_level(probability, services.forecast.threshold),
+                predicted_positive=probability >= forecaster.threshold,
+                threshold=forecaster.threshold,
+                risk_level=risk_level(probability, forecaster.threshold),
                 attention=[round(float(a), 5) for a in attention[position]],
                 features={
                     name: float(value)
-                    for name, value in zip(
-                        services.forecast.features, sequences[position, -1], strict=True
-                    )
+                    for name, value in zip(forecaster.features, sequences[position, -1], strict=True)
                 },
                 lat=_optional_float(row.get("lat")),
                 lon=_optional_float(row.get("lon")),
@@ -190,6 +212,17 @@ def forecast_at_time(
     return results
 
 
+def _prediction_source(services, model: str | None) -> str:
+    """ชื่อที่แผง confusion matrix ขอ — ไม่ระบุคือโมเดลปริยาย, ชื่อที่ไม่รู้จักเป็น 422"""
+    name = model or services.forecast.default_name
+    if name != "baseline" and name not in services.forecast.names:
+        raise HTTPException(
+            status_code=422,
+            detail=f"ไม่รู้จักโมเดล {name!r} (ที่มี: {', '.join([*services.forecast.names, 'baseline'])})",
+        )
+    return name
+
+
 @router.get(
     "/forecast/confusion-matrix",
     response_model=ConfusionMatrixSummary,
@@ -197,7 +230,9 @@ def forecast_at_time(
 )
 def confusion_matrix_summary(
     request: Request,
-    model: Literal["lstm", "baseline"] = Query("lstm", description="โมเดลที่ต้องการดู"),
+    model: str | None = Query(
+        None, description='ชื่อโมเดล หรือ "baseline" สำหรับ logistic baseline — ไม่ระบุคือโมเดลปริยาย'
+    ),
     split: Literal["val", "test"] = Query(
         "test", description="val คือชุดที่ใช้เลือก threshold ไม่ใช่ชุดรายงานผล"
     ),
@@ -208,7 +243,8 @@ def confusion_matrix_summary(
     (หรือยังไม่มีค่าทำนายของ baseline) ซึ่ง handler ส่วนกลางใน ``main.py`` แปลงเป็น
     503 พร้อมข้อความบอกวิธีแก้ให้อัตโนมัติ — ไม่ต้อง try/except ซ้ำที่นี่
     """
-    return _services(request).predictions.sweep(model, split)
+    services = _services(request)
+    return services.predictions.sweep(_prediction_source(services, model), split)
 
 
 @router.get(
@@ -218,7 +254,7 @@ def confusion_matrix_summary(
 )
 def confusion_matrix_samples(
     request: Request,
-    model: Literal["lstm", "baseline"] = Query("lstm", description="โมเดลที่ต้องการดู"),
+    model: str | None = Query(None, description='ชื่อโมเดล หรือ "baseline" — ไม่ระบุคือโมเดลปริยาย'),
     split: Literal["val", "test"] = Query("test"),
     threshold: float = Query(
         ..., ge=0.0, le=1.0, description="threshold ณ ตำแหน่งสไลเดอร์ตอนคลิก (ไม่จำเป็นต้องเป็นค่าที่ freeze ไว้)"
@@ -230,7 +266,8 @@ def confusion_matrix_samples(
     ส่งข้ามสายมาทั้งก้อนตั้งแต่ตอนโหลดหน้า (ดู endpoint สรุปด้านบนสำหรับ payload เบา)
     """
     services = _services(request)
-    rows, total = services.predictions.samples_in_cell(model, split, threshold, cell, limit=limit)
+    name = _prediction_source(services, model)
+    rows, total = services.predictions.samples_in_cell(name, split, threshold, cell, limit=limit)
 
     samples = [
         ConfusionMatrixSample(
@@ -243,19 +280,8 @@ def confusion_matrix_samples(
     ]
 
     return ConfusionMatrixSampleList(
-        model=model, split=split, threshold=threshold, cell=cell, total=total, samples=samples
+        model=name, split=split, threshold=threshold, cell=cell, total=total, samples=samples
     )
-
-
-def _risk_level(probability: float, threshold: float) -> str:
-    ratio = probability / max(threshold, 1e-6)
-    if ratio >= 2.0:
-        return "high"
-    if ratio >= 1.0:
-        return "elevated"
-    if ratio >= 0.5:
-        return "moderate"
-    return "low"
 
 
 def _optional_float(value) -> float | None:

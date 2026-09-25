@@ -223,6 +223,17 @@
 }
 .page-header__aside { display: flex; gap: 10px; flex-wrap: wrap; }
 
+/* ปุ่มเลือกโมเดลพยากรณ์ใน page header (ForecastModelPicker) — ใช้ .layer-pill ตัวเดียวกับการ์ด */
+.model-picker { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.model-picker__label {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.model-picker__pills { margin-bottom: 0; }
+
 /* แถบตัวเลขสรุปแบบมีขอบซ้ายเป็นสี */
 .stat-strip {
   display: grid;

@@ -57,6 +57,28 @@
 .split__num { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
 .split__pos { grid-column: 2 / -1; margin-top: -6px; color: var(--text-muted); font-family: var(--font-mono); font-size: 11.5px; }
 
+/* ผลของโมเดลหลัก (ClassForecastResults) — สีระดับมาจาก .class-level--* ใน dashboard.css */
+.class-results { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(16px, 3vw, 28px); align-items: start; }
+.class-cm { width: 100%; border-collapse: separate; border-spacing: 5px; }
+.class-cm caption { margin-bottom: 6px; text-align: left; caption-side: top; }
+.class-cm th { position: static; padding: 6px 8px; background: transparent; border: none; color: var(--text-secondary); font-weight: 500; }
+.class-cm thead th.num { text-align: center; }
+.class-cm tbody th { text-align: right; white-space: nowrap; }
+.class-cm__cell {
+  padding: 10px 8px;
+  border: 1px solid var(--border-soft);
+  /* ความเข้มของพื้นตามสัดส่วนในแถว — ตัวเลขบอกค่าจริงเสมอ สีเป็นแค่ตัวช่วยกวาดตา */
+  background: color-mix(in srgb, var(--level) calc(var(--share) * 38%), transparent);
+  text-align: center;
+}
+.class-cm__cell b { display: block; color: var(--text-primary); font-family: var(--font-display); font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.class-cm__cell span { display: block; color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; }
+.class-cm__cell.is-diag { border-color: var(--text-muted); }
+
+@media (max-width: 900px) {
+  .class-results { grid-template-columns: minmax(0, 1fr); }
+}
+
 .note { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--gridline); color: var(--text-muted); font-size: 14px; line-height: 1.8; }
 .note code { padding: 1px 5px; background: var(--primary-wash); color: var(--primary-light); font-size: 12.5px; }
 .note em { color: var(--text-secondary); font-style: normal; font-weight: 700; }

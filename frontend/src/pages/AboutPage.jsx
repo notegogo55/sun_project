@@ -14,18 +14,18 @@ const PILLARS = [
     foot: "track ยืนยันเมื่อเห็นติดกัน ≥ 2 เฟรม", to: dashboardHref("extraction"),
   },
   {
-    index: "03", label: "Forecasting", title: "LSTM",
-    text: "ทำนายโอกาสเกิด flare ≥M1.0 ภายใน 24 ชม. จาก SHARP magnetic parameters ย้อนหลัง 24 จุด",
-    foot: "threshold freeze จาก validation set", to: dashboardHref("risk"),
+    index: "03", label: "Forecasting", title: "LSTM + V3 — ระดับ <M / M / X",
+    text: "โมเดลหลัก LSTM + V3 (SHARP + ความเข้มแสง AIA + X-ray ทุก 12 ชม.) ทำนายระดับของ flare ที่แรงที่สุดใน 24 ชม. ถัดไป — ensemble 25 seed ต่อระดับ พร้อมโมเดลความเสี่ยง ≥M1.0 รายชั่วโมงอีกสี่สถาปัตยกรรม (LSTM · TCN · Transformer · DA-RNN)",
+    foot: "threshold freeze จาก validation set", to: dashboardHref("class"),
   },
 ];
 
 const SOURCES = [
-  ["JSOC hmi.sharp_cea_720s", "SHARP magnetic parameters — features ของ LSTM (พิกัด CEA แก้ผลการฉายแล้ว)"],
+  ["JSOC hmi.sharp_cea_720s", "SHARP magnetic parameters — features ของโมเดลพยากรณ์ (พิกัด CEA แก้ผลการฉายแล้ว)"],
   ["JSOC hmi.sharp_720s", "bitmap segment — ground-truth mask ของ U-Net (พิกัด CCD ตรงกับภาพเต็มดวง)"],
   ["JSOC hmi.M_720s", "ภาพ magnetogram เต็มดวง — input ของ U-Net"],
   ["AIA synoptic", "ภาพ AIA 1600/304/171 Å — เลเยอร์ชั้นบรรยากาศใน dashboard", "https://jsoc1.stanford.edu/data/aia/synoptic/"],
-  ["NGDC GOES XRS reports", "รายการ flare — labels ของ LSTM (ค่าเริ่มต้น ครอบคลุม 1975–2017)", "https://www.ngdc.noaa.gov/stp/space-weather/solar-data/solar-features/solar-flares/x-rays/goes/xrs/"],
+  ["NGDC GOES XRS reports", "รายการ flare — labels ของโมเดลพยากรณ์ (ค่าเริ่มต้น ครอบคลุม 1975–2017)", "https://www.ngdc.noaa.gov/stp/space-weather/solar-data/solar-features/solar-flares/x-rays/goes/xrs/"],
   ["HARPNUM ↔ NOAA", "เชื่อม SHARP เข้ากับ flare catalog", "http://jsoc.stanford.edu/doc/data/hmi/harpnum_to_noaa/all_harps_with_noaa_ars.txt"],
   ["GOES particle (5 นาที)", "ฟลักซ์โปรตอนรอบเวลาที่เกิด flare — แผง Proton flux"],
   ["NOAA NCEI xrsf-l2-avg1m", "ฟลักซ์ X-ray ต่อเนื่องรายนาที — เส้น GOES X-ray ใน dashboard"],

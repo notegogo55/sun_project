@@ -258,6 +258,99 @@
 .outcome--yes { border: 1px solid rgba(208, 59, 59, 0.45); background: rgba(92, 43, 46, 0.45); color: #ff9d9d; }
 .outcome--no  { border: 1px solid rgba(12, 163, 12, 0.40); background: rgba(35, 74, 47, 0.40); color: #7fe08c; }
 
+/* ── โมเดลหลัก: ระดับคลาส <M / M / X (ClassForecastCard) ──────── */
+
+/* สีของระดับใช้ --status-* ชุดเดียวกับแผงความเสี่ยง (ตรวจ contrast บนพื้นมืดแล้ว) — ทุกที่ที่ใช้สีมีตัวอักษรระดับ
+   กำกับเสมอ ไม่พึ่งสีอย่างเดียว */
+.class-level--quiet { --level: var(--status-good); --level-wash: rgba(12, 163, 12, 0.14); }
+.class-level--m     { --level: var(--status-warning); --level-wash: rgba(250, 178, 25, 0.16); }
+.class-level--x     { --level: var(--status-critical); --level-wash: rgba(208, 59, 59, 0.20); }
+
+.card--class { border-color: var(--border-strong); }
+.class-mode { margin-bottom: 0; }
+
+.class-forecast {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: clamp(16px, 3vw, 32px);
+  align-items: start;
+}
+.class-forecast__now { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.class-forecast__badge {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  border: 2px solid var(--level);
+  background: var(--level-wash);
+  color: var(--level);
+  font-family: var(--font-display);
+  font-size: 50px;
+  font-weight: 800;
+  text-shadow: 0 0 24px var(--level-wash);
+}
+.class-forecast__label { margin-top: 10px; color: var(--level); font-size: 16px; font-weight: 700; }  /* ไม่ใส่ letter-spacing — ทำให้วรรณยุกต์ไทยแยกจากพยัญชนะ */
+.class-forecast__hint { margin-top: 4px; color: var(--text-secondary); font-size: 14px; }
+.class-forecast__meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  width: 100%;
+  margin-top: 14px;
+  text-align: left;
+  font-size: 14px;
+}
+.class-forecast__meta dt { color: var(--text-muted); }
+.class-forecast__meta dd { color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; }
+.class-forecast__warn { margin-top: 10px; color: var(--status-warning); font-size: 13px; }
+
+.class-forecast__timeline { min-width: 0; }
+.class-forecast__mode-note { margin-bottom: 12px; color: var(--text-secondary); font-size: 14px; }
+.class-forecast__foot { display: block; margin-top: 10px; }
+
+.class-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+  overflow-x: auto;
+}
+.class-strip__rowhead { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+.class-strip__row {
+  display: grid;
+  grid-template-columns: repeat(var(--n), minmax(22px, 1fr));
+  gap: 3px;
+}
+.class-strip__cell, .class-strip__truth {
+  display: grid;
+  place-items: center;
+  min-height: 34px;
+  border: 1px solid var(--level);
+  background: var(--level-wash);
+  color: var(--level);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.class-strip__cell { min-height: var(--touch); padding: 0; cursor: pointer; transition: transform 120ms ease; }
+.class-strip__cell:hover { transform: translateY(-2px); }
+.class-strip__cell:focus-visible { outline: 2px solid var(--primary-light); outline-offset: 2px; }
+.class-strip__cell.is-picked { box-shadow: 0 0 0 2px var(--text-primary); }
+.class-strip__truth { min-height: 26px; border-style: dashed; opacity: 0.85; }
+.class-strip__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  padding-left: 64px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .class-forecast { grid-template-columns: minmax(0, 1fr); }
+  .class-strip__axis { padding-left: 0; }
+}
+
 /* ── ตาราง active region ─────────────────────────────────────── */
 
 .search { margin-bottom: 10px; }

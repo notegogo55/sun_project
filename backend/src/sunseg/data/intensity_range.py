@@ -1,5 +1,5 @@
 """ฟังก์ชันบริสุทธิ์ของการสกัดความเข้มแสงตลอดช่วง 2011-2017 + พ.ค. 2024 (ticket 05 ของ
-``.scratch/lstm-feature-ablation/``) — แยกจากสคริปต์ ``backend/scripts/extract_intensity.py``
+``.scratch/lstm-feature-ablation/``) — แยกจากสคริปต์ ``backend/scripts/study/extract_intensity.py``
 เพื่อทดสอบได้โดยไม่ต้องมีเฟรมหรือโมเดลจริง
 
 ด่านตรวจเดือนเดียว (``intensity_gate_check.py``) พิสูจน์ท่อไว้แล้วบน พ.ค. 2024 การขยายไปทั้ง

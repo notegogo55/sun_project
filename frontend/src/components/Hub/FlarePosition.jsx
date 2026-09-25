@@ -26,7 +26,7 @@ function toggleIn(set, key) {
 /** หน้าแรก — แผนที่ตำแหน่ง flare ในแนวงาน PositionFlare (D:\position_flare):
  *  แถบตัวกรอง → แผนที่จานสุริยะ + แผงรายละเอียด → ตาราง flare ทุกดวง
  *
- *  flare ที่แสดงคือชุดเดียวกับแคตตาล็อกที่ LSTM ใช้ทำ label (คลาสตามโมเดล) ส่วนพิกัดมาจาก
+ *  flare ที่แสดงคือชุดเดียวกับแคตตาล็อกที่โมเดลพยากรณ์ใช้ทำ label (คลาสตามโมเดล) ส่วนพิกัดมาจาก
  *  PositionFlare ซึ่ง backend จับคู่ด้วยเวลาพีคไว้ล่วงหน้า — ดู state/flareCatalog.js
  *
  *  ชี้ = ดูผ่าน ๆ, คลิก = ตรึง (ของที่ตรึงชนะเสมอจนกว่าจะคลิกซ้ำ) ทั้งแผนที่และตารางใช้ state
@@ -129,7 +129,7 @@ export default function FlarePosition() {
           <div className="fp-meta">
             {data && (
               <>
-                <span title="flare ระดับ C ขึ้นไปในแคตตาล็อกที่ LSTM ใช้ทำ label">
+                <span title="flare ระดับ C ขึ้นไปในแคตตาล็อกที่โมเดลพยากรณ์ใช้ทำ label">
                   {int(data.rows.length)} flares ในแคตตาล็อกโมเดล · {dateUTC(data.tMin)} – {dateUTC(data.tMax)}
                 </span>
                 <span title={`จับคู่ด้วยเวลาพีค ±${data.tolerance} นาที`}>
@@ -182,7 +182,7 @@ export default function FlarePosition() {
             <div className="fp-chips">
               <button
                 type="button" className="chip" aria-pressed={harpOnly}
-                title="เฉพาะ flare ที่จับคู่กับ HARP ได้ — มีผลพยากรณ์ของ LSTM ให้เปิดดูต่อใน dashboard"
+                title="เฉพาะ flare ที่จับคู่กับ HARP ได้ — มีผลพยากรณ์ให้เปิดดูต่อใน dashboard"
                 onClick={() => setHarpOnly((v) => !v)}
               >
                 เฉพาะที่มีคู่ HARP

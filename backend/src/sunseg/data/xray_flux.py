@@ -3,12 +3,12 @@
 รายการ flare จาก ``noaa_flares.py`` บอกแค่ "เกิดอะไรตอนไหน" (เริ่ม/peak/จบ 3 จุด)
 ซึ่งพอสำหรับ label ของโมเดล แต่วาดกราฟจากสามจุดนั้นจะได้เส้นเป็นหนามแหลม ๆ
 ไม่ใช่ฟลักซ์จริงที่ขึ้น-ลงต่อเนื่องแบบที่ SWPC แสดงบนเว็บ — โมดูลนี้อ่านฟลักซ์จริง
-รายนาทีจากไฟล์ที่ ``scripts/download_xray.py`` ดาวน์โหลดไว้ล่วงหน้า
+รายนาทีจากไฟล์ที่ ``scripts/data/download_xray.py`` ดาวน์โหลดไว้ล่วงหน้า
 
 **GOES-15 (2011-2017) + GOES-16 (หน้าต่าง case study พ.ค. 2024 เป็นต้นไป)** —
 GOES-15/14 (คลัง legacy "GOES 1-15" ของ NCEI) หยุดมีข้อมูลหลัง 2020-03-04 ส่วน
 GOES-16 (คลัง "GOES-R series" คนละ URL root กันโดยสิ้นเชิง — ดู
-``scripts/download_xray.py``) เป็นดาวเทียมที่ยังทำงานอยู่ช่วง พ.ค. 2024 (พายุ Gannon)
+``scripts/data/download_xray.py``) เป็นดาวเทียมที่ยังทำงานอยู่ช่วง พ.ค. 2024 (พายุ Gannon)
 ออกแบบให้เพิ่มดาวเทียมอื่นได้ทีหลังผ่าน ``SOURCE_SATELLITES`` โดยไม่ต้องแก้โครงสร้าง
 
 รูปแบบไฟล์ (NOAA NCEI ``xrsf-l2-avg1m_science``) เป็น NetCDF4 ซึ่งจริง ๆ คือ HDF5
@@ -125,7 +125,7 @@ class XrayFluxStore:
         else:
             logger.warning(
                 "ไม่พบไฟล์ XRS ที่ %s — เส้น X-ray จะใช้ข้อมูลจากรายการ flare แทน "
-                "(รัน backend/scripts/download_xray.py เพื่อได้เส้นต่อเนื่องจริง)",
+                "(รัน backend/scripts/data/download_xray.py เพื่อได้เส้นต่อเนื่องจริง)",
                 self.root,
             )
 
@@ -209,7 +209,9 @@ class XrayFluxStore:
             decimated=decimated,
         )
 
-    def bin_series(self, start: datetime, end: datetime, cadence_hours: int) -> pd.DataFrame:
+    def bin_series(
+        self, start: datetime, end: datetime, cadence_hours: int, baseline_days: int = 27
+    ) -> pd.DataFrame:
         """ยุบฟลักซ์รายนาทีลงกริดเวลาสม่ำเสมอทุก ``cadence_hours`` ชม. — ใช้ทำ feature
         ของ sequence dataset ไม่ใช่วาดกราฟ (นั่นคือหน้าที่ของ ``series()``)
 
@@ -222,13 +224,21 @@ class XrayFluxStore:
         ``signed_log1p`` ทั่วไปที่ใช้กับ SHARP จัดการ เพราะฟลักซ์ดิบมีค่าเล็กมาก
         (ระดับ 1e-9 ถึง 1e-3) ซึ่ง log1p(x) ≈ x ในช่วงนี้แทบไม่บีบอัด scale ให้เลย
 
+        ``xray_log10_rel27d`` = log10(median ของ bin) − log10(median ของฟลักซ์ใน
+        ``(t - baseline_days วัน, t]``) คือระดับเทียบกับพื้นหลังของรอบหมุนดวงอาทิตย์ล่าสุด
+        ค่าสัมบูรณ์ (``xray_log10_median``) ขึ้นลงตาม solar cycle ทั้งก้อน ทำให้ threshold ที่เลือก
+        บน val ปีหนึ่งใช้กับ test อีกปีไม่ได้ ค่าสัมพัทธ์ตัดระดับนั้นออก ช่วงย้อนหลังรวม bin
+        ปัจจุบันไว้ด้วย คอลัมน์นี้จึงเป็น NaN เฉพาะเมื่อ median ของ bin เป็น NaN ทำให้แถวที่
+        dataset เก็บไว้ไม่เปลี่ยน
+
         bin ที่ไม่มีข้อมูลจริงเลยในช่วงของมัน (ไฟล์ขาด หรือทุกจุดถูกกรองเป็น NaN) ได้ NaN
-        ทั้ง 4 คอลัมน์ ไม่ใช่ 0 — 0 จะแปลว่า "ไม่มีรังสีเอกซ์เลย" ซึ่งผิด ความจริงคือ "ไม่รู้"
+        ทุกคอลัมน์ ไม่ใช่ 0 — 0 จะแปลว่า "ไม่มีรังสีเอกซ์เลย" ซึ่งผิด ความจริงคือ "ไม่รู้"
         """
         cadence = timedelta(hours=cadence_hours)
+        baseline = timedelta(days=baseline_days)
         grid = pd.date_range(start, end, freq=cadence)
 
-        all_times, all_flux = self._read_raw(start - cadence, end)
+        all_times, all_flux = self._read_raw(start - max(cadence, baseline), end)
         finite = np.isfinite(all_flux)
         times = all_times[finite]  # เรียงแล้วตั้งแต่ _read_raw — searchsorted ใช้ได้ตรงๆ
         flux = all_flux[finite]
@@ -241,10 +251,12 @@ class XrayFluxStore:
         edges_lo = edges_hi - np.timedelta64(cadence)
         lo_idx = np.searchsorted(times, edges_lo, side="right")  # times > lo
         hi_idx = np.searchsorted(times, edges_hi, side="right")  # times <= hi
+        base_lo_idx = np.searchsorted(times, edges_hi - np.timedelta64(baseline), side="right")
 
         medians = np.full(len(grid), np.nan)
         maxes = np.full(len(grid), np.nan)
         mins = np.full(len(grid), np.nan)
+        baselines = np.full(len(grid), np.nan)
         for i in range(len(grid)):
             if hi_idx[i] <= lo_idx[i]:
                 continue
@@ -252,10 +264,13 @@ class XrayFluxStore:
             medians[i] = np.median(vals)
             maxes[i] = np.max(vals)
             mins[i] = np.min(vals)
+            baselines[i] = np.median(flux[base_lo_idx[i] : hi_idx[i]])
 
         positive = np.isfinite(medians) & (medians > 0)
         log10_median = np.full_like(medians, np.nan)
         log10_median[positive] = np.log10(medians[positive])
+        log10_rel = np.full_like(medians, np.nan)
+        log10_rel[positive] = log10_median[positive] - np.log10(baselines[positive])
 
         return pd.DataFrame(
             {
@@ -264,6 +279,7 @@ class XrayFluxStore:
                 "xray_max": maxes,
                 "xray_min": mins,
                 "xray_log10_median": log10_median,
+                "xray_log10_rel27d": log10_rel,
             }
         )
 
