@@ -89,13 +89,24 @@ python backend/scripts/data/download_aia.py                     # แล้ว�
 #      (ต้องมี flares.parquet จากขั้นตอน 1 และ CSV ของ PositionFlare — ดูหัวข้อ "ตำแหน่ง flare" ด้านล่าง)
 python backend/scripts/data/build_flare_positions.py
 
-# 6.8) โมเดลหลัก LSTM + V3 แยกระดับ <M/M/X (ต้องมีภาพ AIA + X-ray ก่อน — ดู "แหล่งข้อมูล")
-#      ระดับ M: เซลล์ lstm/V3 ของงานเปรียบเทียบ · ระดับ X: เซลล์เดียวกันที่เทรนด้วย label ≥X1.0
-python backend/scripts/study/build_dataset.py
-python backend/scripts/study/train.py
+# 6.7) feature เพิ่มเติมของงานเปรียบเทียบ: ฟลักซ์ X-ray ทั้งช่วง + ความเข้มแสง AIA ราย HARP
+#      (ต้องมีภาพจากขั้นตอน 4 + 6 และ U-Net จากขั้นตอน 5 — ดู "ฟลักซ์ X-ray" และ "ภาพ AIA" ด้านล่าง)
+python backend/scripts/data/download_xray.py --satellite g15               # 2011-2017
+python backend/scripts/data/download_xray.py --satellite g16 --start 2017-01-01
+python backend/scripts/study/extract_intensity.py --limit 20               # ทดสอบก่อน
+python backend/scripts/study/extract_intensity.py                          # รันต่อจากที่ค้างได้
+
+# 6.8) ผลหลัก: เปรียบเทียบ 16 โมเดล (4 สถาปัตยกรรม × V0-V3 · 25 seed ต่อตัว)
+python backend/scripts/study/build_dataset.py        # -> data/processed/study_sequences/ (cadence 12 ชม.)
+python backend/scripts/study/train.py                # -> artifacts/model_comparison/report.md (รันต่อได้)
+python backend/scripts/study/plot_figures.py         # รูปประกอบรายงาน -> artifacts/model_comparison/figures/
+python backend/scripts/study/persistence_baseline.py # baseline แบบ persistence -> persistence_baseline.md
+
+# 6.9) โมเดลหลัก LSTM + V3 แยกระดับ <M/M/X
+#      ระดับ M: เซลล์ lstm/V3 จากขั้นตอน 6.8 · ระดับ X: เซลล์เดียวกันที่เทรนด้วย label ≥X1.0
 python backend/scripts/study/build_dataset.py --positive-class X1.0 --out-dir data/processed/study_sequences_x
 python backend/scripts/study/train.py --data-dir data/processed/study_sequences_x --out-dir artifacts/model_comparison_x `
-    --variants V3 --architectures-file <yaml ที่มีแค่ lstm>
+    --variants V3 --architectures-file <yaml ที่มีแค่ block lstm ของ configs/study/architectures.yaml>
 python backend/scripts/study/class_forecast.py   # รายงาน -> artifacts/class_forecast/report.md
 
 # 7) เปิด webapp — backend (FastAPI, backend/app) กับ frontend (React + Vite, frontend/)
@@ -171,13 +182,13 @@ docker compose up --build
 | JSOC `hmi.sharp_cea_720s` | SHARP magnetic parameters — features ของโมเดลพยากรณ์ (พิกัด CEA แก้ผลการฉายแล้ว) |
 | JSOC `hmi.sharp_720s` | `bitmap` segment — ground-truth mask ของ U-Net (พิกัด CCD ตรงกับภาพเต็มดวง) |
 | JSOC `hmi.M_720s` | ภาพ magnetogram เต็มดวง — input ของ U-Net |
-| [คลัง AIA synoptic](https://jsoc1.stanford.edu/data/aia/synoptic/) | ภาพ AIA 1600/304/171 Å — เลเยอร์ชั้นบรรยากาศในหน้าเว็บ (ดูด้านล่าง) |
-| [NGDC GOES XRS reports](https://www.ngdc.noaa.gov/stp/space-weather/solar-data/solar-features/solar-flares/x-rays/goes/xrs/) | รายการ flare — labels ของโมเดลพยากรณ์ (ค่าเริ่มต้น, ครอบคลุม 1975–2017) |
-| HEK | รายการ flare ทางเลือก (`--flare-source hek`) — ยืดหยุ่นกว่าแต่ช้ากว่ามาก |
+| [คลัง AIA synoptic](https://jsoc1.stanford.edu/data/aia/synoptic/) | ภาพ AIA 6 ช่อง — เลเยอร์ชั้นบรรยากาศในหน้าเว็บ + feature ความเข้มแสงของ V1/V3 (ดูด้านล่าง) |
+| [NGDC GOES XRS reports](https://www.ngdc.noaa.gov/stp/space-weather/solar-data/solar-features/solar-flares/x-rays/goes/xrs/) | รายการ flare — labels ของโมเดลพยากรณ์ ช่วง 2011–2017 (คลังครอบคลุม 1975–2017) |
+| HEK | รายการ flare ช่วงหลัง 2017 — `--flare-source auto` (ค่าเริ่มต้น) สลับมาใช้ให้เองเมื่อเกินคลังของ NGDC |
 | [ตาราง HARPNUM↔NOAA](http://jsoc.stanford.edu/doc/data/hmi/harpnum_to_noaa/all_harps_with_noaa_ars.txt) | เชื่อม SHARP เข้ากับ flare catalog |
 | คลัง GOES particle ราย 5 นาที (ภายนอก) | ฟลักซ์โปรตอนรอบเวลาที่เกิด flare — แผง "Proton flux" ในหน้าเว็บ (ดูด้านล่าง) |
 | PositionFlare `flares_all_cycles.csv` (ภายนอก) | ตำแหน่ง flare บนแผนที่หน้าแรก — จับคู่เข้ากับแคตตาล็อกโมเดลด้วยเวลาพีค (ดูด้านล่าง) |
-| NOAA NCEI `xrsf-l2-avg1m_science` (GOES-15) | ฟลักซ์ X-ray ต่อเนื่องรายนาที — เส้น "GOES X-Ray" ในแดชบอร์ด (ดูด้านล่าง) |
+| NOAA NCEI `xrsf-l2-avg1m_science` (GOES-15 และ GOES-16/17/18/19) | ฟลักซ์ X-ray ต่อเนื่องรายนาที — เส้น "GOES X-Ray" ในแดชบอร์ด + feature X-ray ของ V2/V3 (ดูด้านล่าง) |
 
 ### ตำแหน่ง flare บนแผนที่หน้าแรก (PositionFlare)
 
@@ -209,11 +220,18 @@ magnetogram บอกได้แค่สนามแม่เหล็กท�
 สลับ **เลเยอร์** ของภาพพื้นหลังได้ โดย mask จาก U-Net ทับอยู่ที่เดิมทุกเลเยอร์ ทำให้เห็นว่าโครงสร้าง
 สนามแม่เหล็กเดียวกันให้ความร้อนกับพลาสมาชั้นบนแค่ไหน:
 
-| ช่อง | ชั้นบรรยากาศ | อุณหภูมิลักษณะเฉพาะ |
-|---|---|---|
-| AIA 1600 Å | โฟโตสเฟียร์ / transition region | ~10,000 K |
-| AIA 304 Å | โครโมสเฟียร์ (He II) | ~50,000 K |
-| AIA 171 Å | โคโรนาสงบ (Fe IX) | ~600,000 K |
+| ช่อง | ชั้นบรรยากาศ | อุณหภูมิลักษณะเฉพาะ | feature ของ V1/V3 |
+|---|---|---|:---:|
+| AIA 4500 Å | โฟโตสเฟียร์ (continuum) | ~5,000 K | ✓ |
+| AIA 1600 Å | โฟโตสเฟียร์ / transition region | ~10,000 K | |
+| AIA 304 Å | โครโมสเฟียร์ (He II) | ~50,000 K | ✓ |
+| AIA 171 Å | โคโรนาสงบ (Fe IX) | ~600,000 K | ✓ |
+| AIA 131 Å | โคโรนาร้อน / flare (Fe XXI) | ~10 MK | |
+| AIA 94 Å | โคโรนาร้อน (Fe XVIII) | ~6 MK | |
+
+feature ความเข้มแสงของงานเปรียบเทียบคือค่า p95 ราย HARP ของสามช่องที่ติ๊กไว้ สกัดด้วย
+`study/extract_intensity.py` (U-Net ทำนาย mask → normalise ด้วย quiet Sun → จับคู่ HARP) ช่อง 4500 แทนที่ 1600
+เพราะเป็นโฟโตสเฟียร์จริงที่ไม่ drift ตามรอบสุริยะ ส่วน 94/131 ใช้เฉพาะงานเสริม (`variants_v3_aia.yaml`)
 
 ```powershell
 python backend/scripts/data/download_aia.py --wcs-only     # ดึง WCS ของเฟรม (เร็ว ไม่ต้องใช้อีเมล JSOC)
@@ -258,14 +276,21 @@ API จะแนบ `note` อธิบายข้อจำกัดของ�
 เส้น **GOES X-Ray** ในแดชบอร์ดค่าเริ่มต้นวาดจากรายการ flare (แค่ 3 จุดต่อเหตุการณ์: เริ่ม/peak/จบ)
 ซึ่งได้เส้นเป็นหนามแหลม ๆ ไม่ใช่ฟลักซ์จริงที่ขึ้นลงต่อเนื่องแบบหน้า
 [SWPC](https://www.swpc.noaa.gov/products/goes-x-ray-flux) — รันสคริปต์นี้เพื่อดึงฟลักซ์จริงรายนาที
-จาก NOAA NCEI (เฉพาะ GOES-15 ช่วง 2011–2017 ซึ่งครอบคลุม `time_range` ของโปรเจคพอดี):
+จาก NOAA NCEI ฟลักซ์ชุดเดียวกันนี้ยังเป็น **feature X-ray ของ V2/V3** ในงานเปรียบเทียบด้วย
+(median ของ log₁₀ ฟลักซ์ทั้งดวงในแต่ละช่วง 12 ชม.)
+
+GOES-15 หยุดส่งข้อมูลปี 2020 ช่วงหลังจากนั้นต้องใช้ GOES-R series (g16 → g19 → g18 → g17 ตามลำดับที่ใช้แทนกัน)
+ซึ่งอยู่คนละ URL root และสเกลต่างจาก g15 ราว 8% `sunseg.data.xray_flux` ปรับทุกดวงให้เข้าสเกลของ g15 ให้เอง
+(ตัวคูณวัดจากช่วงที่ดาวเทียมทับซ้อนกัน — ดู `data/measure_xray_cross_calibration.py`)
 
 ```powershell
-# ทดสอบด้วยเดือนเดียวก่อน (แนะนำ — ไฟล์เต็มช่วงมีเกือบ 2,600 ไฟล์ ~150 MB)
-python backend/scripts/data/download_xray.py --start 2014-10-01 --end 2014-10-31
+# ทดสอบด้วยเดือนเดียวก่อน (แนะนำ — g15 ช่วง 2011-2017 มีเกือบ 2,600 ไฟล์ ~150 MB)
+python backend/scripts/data/download_xray.py --satellite g15 --start 2014-10-01 --end 2014-10-31
 
-# ดึงเต็มช่วงตาม time_range ใน configs/data.yaml (ใช้เวลานาน)
-python backend/scripts/data/download_xray.py
+# ดึงเต็มช่วง
+python backend/scripts/data/download_xray.py --satellite g15
+python backend/scripts/data/download_xray.py --satellite g16 --start 2017-01-01
+python backend/scripts/data/download_xray.py --satellite g19 --start 2024-01-01   # ช่วงที่ g16 ไม่มีไฟล์แล้ว
 ```
 
 ไฟล์ถูกเก็บที่ `data/raw/xrs/` รันซ้ำได้ปลอดภัย (ข้ามไฟล์ที่มีอยู่แล้ว) ถ้ายังไม่ได้รันสคริปต์นี้
@@ -292,9 +317,15 @@ flare ระดับ X บางดวงตามมาด้วยพาย�
 
 ผลกระทบจริงน้อยกว่าตัวเลขนี้มาก เพราะ label คือ "**มี** flare M+ ในอีก 24 ชม. หรือไม่" — flare ที่หายไป
 จะพลิก label ก็ต่อเมื่อไม่มี flare อื่นคลุมหน้าต่างเดียวกัน และ AR ที่ปะทุมักปะทุหลายครั้งติดกัน
-ตรวจยืนยันได้จาก **positive rate สุดท้าย 1.76% ซึ่งอยู่ในช่วงที่งานวิจัยรายงาน (1–5%)**
+ตรวจยืนยันได้จาก **positive rate สุดท้าย 2.32% (ข้อมูล 2011–2025) ซึ่งอยู่ในช่วงที่งานวิจัยรายงาน (1–5%)**
 
 ใช้ `python backend/scripts/checks/inspect_flares.py` เพื่อดูตัวเลขนี้กับข้อมูลของคุณเอง
+
+**flare ช่วงที่มาจาก HEK (2015 เป็นต้นไป) ตกหล่นมากกว่านี้** — `flares.parquet` สร้างก่อนแก้บั๊กอ่านเลข
+NOAA AR ของ HEK (ทิ้ง flare ที่ AR = 0 และเลข AR 4 หลัก) ปี 2022 จับคู่ HARP ได้แค่ 22 จาก 193 ครั้งของ M+
+`data/rebuild_flares_v2.py` สร้างฉบับแก้แล้วเป็น `data/interim/flares_v2.parquet` จาก cache โดยไม่แตะเครือข่าย
+แต่ **ไม่เขียนทับไฟล์เดิม** เพราะผลทุกชุดในหัวข้อ "ผลการทดลอง" เทรนด้วย label จากไฟล์เดิม — งานใหม่เลือกใช้ได้ผ่าน
+`study/build_dataset.py --flares-path data/interim/flares_v2.parquet`
 
 ## หลักการสำคัญ: การป้องกัน data leakage
 
@@ -476,12 +507,14 @@ backend/
     report_style.py   สไตล์รูปประกอบรายงาน (จานสี, ฟอนต์ไทย)
   app/                FastAPI backend — API เท่านั้น ไม่รู้จักไฟล์ frontend เลย
   scripts/
-    data/             ดาวน์โหลด + สร้าง dataset (download_*, build_sequences, build_flare_positions)
+    data/             ดาวน์โหลด + สร้าง dataset (download_*, build_sequences, build_flare_positions,
+                      rebuild_flares_v2, measure_xray_cross_calibration)
     segmentation/     train.py (U-Net), plot_masks, render_*_video
-    forecast/         train.py --model <ชื่อ|all>, plot_example.py
-    study/            build_dataset, train, tune, class_forecast (รายงานโมเดลหลัก), plot_figures, extract_intensity, ด่านตรวจต่าง ๆ
+    forecast/         train.py --model <ชื่อ|all>, plot_example, plot_storm_forecast (คำพยากรณ์ราย 24 ชม. เทียบฟลักซ์จริง)
+    study/            build_dataset, train, tune (Optuna + CV), class_forecast (รายงานโมเดลหลัก), plot_figures,
+                      persistence_baseline, extract_intensity, evidence_analysis, measure_acquisition_time, ด่านตรวจต่าง ๆ
     checks/           check_env, check_connectivity, check_api, inspect_flares, plot_aia_alignment
-  tests/              pytest
+  tests/              pytest (632 test)
   pyproject.toml
   Dockerfile        build จาก root ของ repo (ต้องการ README.md นอก backend/)
 frontend/           React + Vite — คนละ container/process จาก backend เสมอ
@@ -498,6 +531,10 @@ data/               ดาวน์โหลด/ประมวลผลจา�
   processed/aia/      ภาพ AIA รายช่อง วางบนกริดเดียวกับ frames/ แล้ว (DN/s)
   interim/frame_wcs.parquet   WCS จริงของแต่ละเฟรม (ดู "ภาพ AIA" ด้านบน)
 artifacts/          โมเดลที่เทรนแล้ว, log, ผลการวัด (อยู่นอก backend/ โดยเจตนา)
+  model_comparison/   ผลหลัก: report.md (อันดับ 16 โมเดล), figures/, persistence_baseline.md
+  model_comparison_x/ เซลล์ LSTM + V3 ที่เทรนด้วย label ≥X1.0 (ระดับ X ของโมเดลหลัก)
+  class_forecast/     รายงานโมเดลหลัก <M/M/X
+docs/adr/           บันทึกการตัดสินใจเชิงออกแบบ (เช่น 0001: จูน hyperparameter แยกรายสถาปัตยกรรม)
 ```
 
 ## การทดสอบ
